@@ -18,7 +18,7 @@ Post a basic markdown comment to a PR:
 
 ```yaml
 - name: Post PR Comment
-  uses: your-org/dev-herald-action@v1
+  uses: dev-herald/comment@v1
   with:
     api-key: ${{ secrets.DEV_HERALD_API_KEY }}
     pr-number: ${{ github.event.pull_request.number }}
@@ -36,7 +36,7 @@ Post a basic markdown comment to a PR:
 
 ```yaml
 - name: Post Deployment Status
-  uses: your-org/dev-herald-action@v1
+  uses: dev-herald/comment@v1
   with:
     api-key: ${{ secrets.DEV_HERALD_API_KEY }}
     pr-number: ${{ github.event.pull_request.number }}
@@ -57,7 +57,7 @@ Post a basic markdown comment to a PR:
 
 ```yaml
 - name: Post Test Results
-  uses: your-org/dev-herald-action@v1
+  uses: dev-herald/comment@v1
   with:
     api-key: ${{ secrets.DEV_HERALD_API_KEY }}
     pr-number: ${{ github.event.pull_request.number }}
@@ -93,7 +93,7 @@ Post a basic markdown comment to a PR:
 
 ```yaml
 - name: Post Migration Progress
-  uses: your-org/dev-herald-action@v1
+  uses: dev-herald/comment@v1
   with:
     api-key: ${{ secrets.DEV_HERALD_API_KEY }}
     pr-number: ${{ github.event.pull_request.number }}
@@ -134,7 +134,7 @@ Post a basic markdown comment to a PR:
 
 ```yaml
 - name: Post Custom Table
-  uses: your-org/dev-herald-action@v1
+  uses: dev-herald/comment@v1
   with:
     api-key: ${{ secrets.DEV_HERALD_API_KEY }}
     pr-number: ${{ github.event.pull_request.number }}
@@ -228,7 +228,7 @@ jobs:
           echo "preview_url=https://preview-pr-${{ github.event.pull_request.number }}.myapp.com" >> $GITHUB_OUTPUT
       
       - name: Post Deployment Status
-        uses: your-org/dev-herald-action@v1
+        uses: dev-herald/comment@v1
         with:
           api-key: ${{ secrets.DEV_HERALD_API_KEY }}
           pr-number: ${{ github.event.pull_request.number }}
@@ -272,7 +272,7 @@ jobs:
       
       - name: Post Test Results (Template)
         if: always()
-        uses: your-org/dev-herald-action@v1
+        uses: dev-herald/comment@v1
         with:
           api-key: ${{ secrets.DEV_HERALD_API_KEY }}
           pr-number: ${{ github.event.pull_request.number }}
