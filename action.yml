@@ -1,5 +1,5 @@
-name: 'Dev Herald PR Comment'
-description: 'Post comments on GitHub Pull Requests via Dev Herald API - supports simple markdown comments and rich templates (deployment status, test results, migrations, custom tables)'
+name: 'PR Comments - Dev Herald'
+description: 'Post automated PR comments with sticky updates and pre-built templates for deployments, tests, and more. By Dev Herald'
 branding:
   icon: 'message-circle'
   color: 'blue'
