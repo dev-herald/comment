@@ -25685,18 +25685,21 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.makeHttpRequest = makeHttpRequest;
 exports.buildHeaders = buildHeaders;
 const https = __importStar(__nccwpck_require__(5692));
-const http = __importStar(__nccwpck_require__(8611));
 /**
- * Makes an HTTP/HTTPS request with the given parameters
+ * Makes an HTTPS request with the given parameters
+ * @throws {Error} If the URL is not HTTPS (for security)
  */
 async function makeHttpRequest(url, method, headers, body) {
     return new Promise((resolve, reject) => {
         const parsedUrl = new URL(url);
-        const isHttps = parsedUrl.protocol === 'https:';
-        const client = isHttps ? https : http;
+        // Enforce HTTPS for security - API keys must be transmitted securely
+        if (parsedUrl.protocol !== 'https:') {
+            reject(new Error(`Only HTTPS URLs are allowed for security reasons. Got: ${parsedUrl.protocol}`));
+            return;
+        }
         const options = {
             hostname: parsedUrl.hostname,
-            port: parsedUrl.port || (isHttps ? 443 : 80),
+            port: parsedUrl.port || 443,
             path: parsedUrl.pathname + parsedUrl.search,
             method: method,
             headers: {
@@ -25704,7 +25707,7 @@ async function makeHttpRequest(url, method, headers, body) {
                 'Content-Length': Buffer.byteLength(JSON.stringify(body))
             }
         };
-        const req = client.request(options, (res) => {
+        const req = https.request(options, (res) => {
             let data = '';
             res.on('data', (chunk) => {
                 data += chunk;
