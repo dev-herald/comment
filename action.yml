@@ -25,7 +25,7 @@ inputs:
   api-url:
     description: 'Dev Herald API base URL (optional, defaults to production URL)'
     required: false
-    default: 'https://api.devherald.com/api/v1/github'
+    default: 'https://dev-herald.com/api/v1/github'
 outputs:
   comment-id:
     description: 'Internal Dev Herald comment ID'
