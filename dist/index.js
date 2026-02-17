@@ -26049,194 +26049,7 @@ exports.getActionInputs = getActionInputs;
 exports.validateInputs = validateInputs;
 exports.buildRequestConfig = buildRequestConfig;
 const core = __importStar(__nccwpck_require__(6966));
-const zod_1 = __nccwpck_require__(8661);
-// ============================================================================
-// Zod Schemas
-// ============================================================================
-/**
- * Schema for PR number - must be a positive integer
- */
-const prNumberSchema = zod_1.z.number().int().positive({
-    message: 'PR number must be a positive integer (e.g., 123, not 0 or negative numbers)'
-});
-/**
- * Schema for API key - non-empty string
- */
-const apiKeySchema = zod_1.z.string().min(1, {
-    message: 'API key is required and cannot be empty'
-});
-/**
- * Schema for comment text - non-empty after trimming
- */
-const commentSchema = zod_1.z.string().trim().min(1, {
-    message: 'Comment text cannot be empty or contain only whitespace'
-}).max(65536, {
-    message: 'Comment text is too long (maximum 65,536 characters)'
-});
-/**
- * Schema for sticky ID - optional, but if provided must be non-empty
- */
-const stickyIdSchema = zod_1.z.string().trim().min(1, {
-    message: 'sticky-id cannot be empty if provided'
-}).max(256, {
-    message: 'sticky-id is too long (maximum 256 characters)'
-}).optional();
-/**
- * Valid template types
- */
-const templateTypeSchema = zod_1.z.enum(['DEPLOYMENT', 'TEST_RESULTS', 'MIGRATION', 'CUSTOM_TABLE'], {
-    message: 'Template must be one of: DEPLOYMENT, TEST_RESULTS, MIGRATION, CUSTOM_TABLE'
-});
-/**
- * Deployment template schema - for Vercel-style deployment status comments
- */
-const deploymentDataSchema = zod_1.z.object({
-    projectName: zod_1.z
-        .string()
-        .min(1, "Project name is required"),
-    projectLink: zod_1.z
-        .url("Project link must be a valid URL")
-        .optional(),
-    deploymentStatus: zod_1.z
-        .string()
-        .min(1, "Deployment status is required"),
-    deploymentLink: zod_1.z
-        .url("Deployment link must be a valid URL"),
-    previewLink: zod_1.z
-        .url("Preview link must be a valid URL")
-        .optional(),
-    commentsLink: zod_1.z
-        .url("Comments link must be a valid URL")
-        .optional(),
-    statusIconUrl: zod_1.z
-        .url("Status icon URL must be a valid URL")
-        .optional(),
-    showTimestamp: zod_1.z
-        .boolean()
-        .default(true)
-}).passthrough(); // Allow additional fields
-/**
- * Schema for TEST_RESULTS template data
- */
-const testResultsDataSchema = zod_1.z.object({
-    total: zod_1.z.number().int().nonnegative('Total tests must be a non-negative integer'),
-    passed: zod_1.z.number().int().nonnegative('Passed tests must be a non-negative integer'),
-    failed: zod_1.z.number().int().nonnegative('Failed tests must be a non-negative integer'),
-    skipped: zod_1.z.number().int().nonnegative('Skipped tests must be a non-negative integer').optional(),
-    duration: zod_1.z.string().optional(),
-    details: zod_1.z.array(zod_1.z.any()).optional()
-}).passthrough();
-/**
- * Schema for MIGRATION template data
- */
-const migrationDataSchema = zod_1.z.object({
-    migrationName: zod_1.z.string().min(1, 'Migration name is required'),
-    status: zod_1.z.enum(['success', 'failure', 'pending']).optional(),
-    duration: zod_1.z.string().optional(),
-    details: zod_1.z.string().optional()
-}).passthrough();
-/**
- * Schema for CUSTOM_TABLE template data
- */
-const customTableDataSchema = zod_1.z.object({
-    title: zod_1.z.string().optional(),
-    headers: zod_1.z.array(zod_1.z.string()).min(1, 'At least one table header is required'),
-    rows: zod_1.z.array(zod_1.z.array(zod_1.z.string())).min(1, 'At least one table row is required')
-}).passthrough();
-/**
- * Raw action inputs schema (before processing)
- */
-const rawInputsSchema = zod_1.z.object({
-    apiKey: apiKeySchema,
-    prNumber: prNumberSchema,
-    comment: zod_1.z.string(),
-    template: zod_1.z.string(),
-    templateData: zod_1.z.string(),
-    stickyId: zod_1.z.string(),
-    apiUrl: zod_1.z.string().url('API URL must be a valid HTTPS URL').startsWith('https://', {
-        message: 'API URL must use HTTPS for security'
-    })
-});
-// ============================================================================
-// Utility Functions
-// ============================================================================
-/**
- * Formats Zod errors into a human-readable message
- */
-function formatZodError(error) {
-    const messages = [];
-    messages.push('❌ Validation failed:\n');
-    const issues = error.issues;
-    issues.forEach((err, index) => {
-        const fieldPath = err.path.length > 0 ? err.path.join('.') : 'input';
-        messages.push(`  ${index + 1}. Field "${fieldPath}": ${err.message}`);
-        // Add context for specific error types using type guards and any for complex types
-        if (err.code === 'invalid_type') {
-            const typeErr = err;
-            if (typeErr.expected && typeErr.received) {
-                messages.push(`     Expected: ${typeErr.expected}, Received: ${typeErr.received}`);
-            }
-        }
-        else if (err.code === 'invalid_value') {
-            const valueErr = err;
-            if (valueErr.options && Array.isArray(valueErr.options)) {
-                messages.push(`     Allowed values: ${valueErr.options.join(', ')}`);
-            }
-        }
-        else if (err.code === 'too_small') {
-            const smallErr = err;
-            if (smallErr.minimum !== undefined) {
-                if (smallErr.type === 'string') {
-                    messages.push(`     Minimum length: ${smallErr.minimum} characters`);
-                }
-                else if (smallErr.type === 'number') {
-                    messages.push(`     Minimum value: ${smallErr.minimum}`);
-                }
-            }
-        }
-        else if (err.code === 'too_big') {
-            const bigErr = err;
-            if (bigErr.maximum !== undefined) {
-                if (bigErr.type === 'string') {
-                    messages.push(`     Maximum length: ${bigErr.maximum} characters`);
-                }
-                else if (bigErr.type === 'number') {
-                    messages.push(`     Maximum value: ${bigErr.maximum}`);
-                }
-            }
-        }
-    });
-    messages.push('\n💡 Please check your workflow file and ensure all inputs are correct.');
-    return messages.join('\n');
-}
-/**
- * Validates template-specific data based on template type
- */
-function validateTemplateData(template, data) {
-    try {
-        switch (template) {
-            case 'DEPLOYMENT':
-                return deploymentDataSchema.parse(data);
-            case 'TEST_RESULTS':
-                return testResultsDataSchema.parse(data);
-            case 'MIGRATION':
-                return migrationDataSchema.parse(data);
-            case 'CUSTOM_TABLE':
-                return customTableDataSchema.parse(data);
-            default:
-                throw new Error(`Unknown template type: ${template}`);
-        }
-    }
-    catch (error) {
-        if (error instanceof zod_1.z.ZodError) {
-            throw new Error(`Invalid data for ${template} template:\n${formatZodError(error)}`);
-        }
-        throw error;
-    }
-}
-// ============================================================================
-// Public API
-// ============================================================================
+const VALID_TEMPLATES = ['DEPLOYMENT', 'TEST_RESULTS', 'MIGRATION', 'CUSTOM_TABLE'];
 /**
  * Reads and returns all action inputs
  */
@@ -26273,56 +26086,40 @@ function buildRequestConfig(inputs) {
     const hasTemplate = inputs.template.trim().length > 0;
     // Validate mode selection
     if (!hasComment && !hasTemplate) {
-        throw new Error('❌ Must provide either "comment" (for simple comments) or "template" (for template comments)\n\n' +
-            '💡 Example with comment:\n' +
-            '  with:\n' +
-            '    comment: "## Build Complete\\n✅ All checks passed!"\n\n' +
-            '💡 Example with template:\n' +
-            '  with:\n' +
-            '    template: "DEPLOYMENT"\n' +
-            '    template-data: \'{"projectName": "My App", "deploymentStatus": "Ready", "deploymentLink": "https://vercel.com/deployments/abc123"}\'');
+        throw new Error('Must provide either "comment" (for simple comments) or "template" (for template comments)');
     }
     if (hasComment && hasTemplate) {
-        throw new Error('❌ Cannot provide both "comment" and "template" - choose one mode\n\n' +
-            '💡 Either use:\n' +
-            '  - "comment" for simple markdown comments\n' +
-            '  - "template" + "template-data" for structured templates');
+        throw new Error('Cannot provide both "comment" and "template" - choose one mode');
     }
+}
+/**
+ * Validates template input and returns parsed data
+ */
+function validateTemplateInput(template, templateData) {
+    if (!VALID_TEMPLATES.includes(template)) {
+        throw new Error(`Invalid template: must be one of ${VALID_TEMPLATES.join(', ')}, got "${template}"`);
+    }
+    if (!templateData || templateData.trim().length === 0) {
+        throw new Error('template-data is required when using template mode');
+    }
+    try {
+        return JSON.parse(templateData);
+    }
+    catch (error) {
+        throw new Error(`Invalid JSON in template-data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+}
+/**
+ * Builds the request configuration based on inputs
+ */
+function buildRequestConfig(inputs) {
+    const hasComment = inputs.comment.trim().length > 0;
+    const hasTemplate = inputs.template.trim().length > 0;
+    // Validate mode selection
+    validateModeSelection(hasComment, hasTemplate);
     if (hasTemplate) {
-        // Template mode - validate template type
-        let validatedTemplate;
-        try {
-            validatedTemplate = templateTypeSchema.parse(inputs.template);
-        }
-        catch (error) {
-            if (error instanceof zod_1.z.ZodError) {
-                throw new Error(formatZodError(error));
-            }
-            throw error;
-        }
-        // Parse and validate template data
-        if (!inputs.templateData || inputs.templateData.trim().length === 0) {
-            throw new Error('❌ template-data is required when using template mode\n\n' +
-                `💡 The ${inputs.template} template requires JSON data. Example:\n` +
-                '  with:\n' +
-                `    template: "${inputs.template}"\n` +
-                '    template-data: \'{"key": "value"}\'');
-        }
-        let parsedData;
-        try {
-            parsedData = JSON.parse(inputs.templateData);
-        }
-        catch (error) {
-            throw new Error(`❌ Invalid JSON in template-data: ${error instanceof Error ? error.message : 'Unknown error'}\n\n` +
-                '💡 Make sure your JSON is properly formatted:\n' +
-                '  - Use single quotes around the JSON string in YAML\n' +
-                '  - Escape special characters properly\n' +
-                '  - Validate JSON at https://jsonlint.com\n\n' +
-                'Example:\n' +
-                '  template-data: \'{"projectName": "My App", "deploymentStatus": "Ready", "deploymentLink": "https://vercel.com/deployments/abc123"}\'');
-        }
-        // Validate template-specific data structure
-        const validatedData = validateTemplateData(validatedTemplate, parsedData);
+        // Template mode
+        const parsedData = validateTemplateInput(inputs.template, inputs.templateData);
         const requestBody = {
             prNumber: inputs.prNumber,
             template: validatedTemplate,
