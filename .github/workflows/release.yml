@@ -27,15 +27,16 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9.15.4
+        uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'pnpm'
+
+      - name: Authenticate with GitHub Package Registry
+        run: echo "//npm.pkg.github.com/:_authToken=${{ secrets.PACKAGE_TOKEN }}" >> ~/.npmrc
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
