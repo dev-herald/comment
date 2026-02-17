@@ -10,10 +10,10 @@ Automated PR comments via [Dev Herald](https://dev-herald.com) — let workflows
 
 ## Why You'll ❤️ This
 
-- Markdown or structured templates — use what fits your team
 - [Sticky comments](https://dev-herald.com/docs/sticky-comments) — update instead of cluttering threads
 - [Pre-built templates](https://dev-herald.com/docs/templates) — include deployment status, test results, table summaries, migration highlights (and more!)
-- Quick to configure, light to run
+- Full GitHub Markdown support — plain comments when you want them  
+- Faster feedback loops — CI/CD results automatically surface in PRs
 
 ## Simple Example
 
