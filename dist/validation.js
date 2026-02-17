@@ -51,11 +51,11 @@ const constants_1 = require("@dev-herald/constants");
  */
 exports.deploymentStatusSchema = zod_1.z.enum(['building', 'queued', 'success', 'failed']);
 /**
- * Enhanced deployment schema that:
- *  - Constrains deploymentStatus to the known enum values
- *  - Auto-defaults statusIconUrl based on deploymentStatus when not provided
+ * Deployment schema with:
+ *  - deploymentStatus constrained to the known enum values
+ *  - statusIconUrl auto-defaulted from DEPLOYMENT_STATUS_IMGS when not provided
  */
-const enhancedDeploymentTemplateSchema = constants_1.deploymentTemplateSchema
+const deploymentSchema = constants_1.deploymentTemplateSchema
     .extend({ deploymentStatus: exports.deploymentStatusSchema })
     .transform((data) => ({
     ...data,
@@ -141,7 +141,7 @@ function validateTemplateData(template, data) {
     try {
         switch (template) {
             case 'DEPLOYMENT':
-                return enhancedDeploymentTemplateSchema.parse(data);
+                return deploymentSchema.parse(data);
             case 'TEST_RESULTS':
                 return constants_1.testResultsTemplateSchema.parse(data);
             case 'MIGRATION':
