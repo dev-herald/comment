@@ -92,6 +92,14 @@ export function formatZodError(error: z.ZodError): string {
         const received = typeErr.input !== undefined ? typeof typeErr.input : 'undefined';
         messages.push(`     Expected: ${typeErr.expected}, Received: ${received}`);
       }
+    } else if (err.code === 'invalid_format') {
+      const formatErr = err as z.core.$ZodIssueInvalidStringFormat;
+      const receivedValue = formatErr.input;
+      if (receivedValue === undefined || receivedValue === null || receivedValue === '') {
+        messages.push(`     Received: ${receivedValue === '' ? '(empty string)' : 'undefined'}`);
+      } else {
+        messages.push(`     Received: "${receivedValue}"`);
+      }
     } else if (err.code === 'invalid_value') {
       const valueErr = err as z.core.$ZodIssueInvalidValue;
       if (valueErr.values?.length) {
