@@ -1,17 +1,20 @@
 import * as core from '@actions/core';
 import { z } from 'zod';
+import {
+  prNumberSchema,
+  stickyIdSchema,
+  simpleCommentSchema,
+  templateTypeSchema,
+  deploymentTemplateSchema,
+  testResultsTemplateSchema,
+  migrationTemplateSchema,
+  customTableTemplateSchema
+} from '@dev-herald/constants';
 import type { ActionInputs, RequestConfig } from './types';
 
 // ============================================================================
-// Zod Schemas
+// Local Schemas (Action-specific)
 // ============================================================================
-
-/**
- * Schema for PR number - must be a positive integer
- */
-const prNumberSchema = z.number().int().positive({
-  message: 'PR number must be a positive integer (e.g., 123, not 0 or negative numbers)'
-});
 
 /**
  * Schema for API key - non-empty string
@@ -19,73 +22,6 @@ const prNumberSchema = z.number().int().positive({
 const apiKeySchema = z.string().min(1, {
   message: 'API key is required and cannot be empty'
 });
-
-/**
- * Schema for comment text - non-empty after trimming
- */
-const commentSchema = z.string().trim().min(1, {
-  message: 'Comment text cannot be empty or contain only whitespace'
-}).max(65536, {
-  message: 'Comment text is too long (maximum 65,536 characters)'
-});
-
-/**
- * Schema for sticky ID - optional, but if provided must be non-empty
- */
-const stickyIdSchema = z.string().trim().min(1, {
-  message: 'sticky-id cannot be empty if provided'
-}).max(256, {
-  message: 'sticky-id is too long (maximum 256 characters)'
-}).optional();
-
-/**
- * Valid template types
- */
-const templateTypeSchema = z.enum(['DEPLOYMENT', 'TEST_RESULTS', 'MIGRATION', 'CUSTOM_TABLE'], {
-  message: 'Template must be one of: DEPLOYMENT, TEST_RESULTS, MIGRATION, CUSTOM_TABLE'
-});
-
-/**
- * Schema for DEPLOYMENT template data
- */
-const deploymentDataSchema = z.object({
-  environment: z.string().min(1, 'Environment is required'),
-  version: z.string().optional(),
-  status: z.enum(['success', 'failure', 'pending']).optional(),
-  url: z.string().url('Deployment URL must be a valid URL').optional(),
-  timestamp: z.string().optional()
-}).passthrough(); // Allow additional fields
-
-/**
- * Schema for TEST_RESULTS template data
- */
-const testResultsDataSchema = z.object({
-  total: z.number().int().nonnegative('Total tests must be a non-negative integer'),
-  passed: z.number().int().nonnegative('Passed tests must be a non-negative integer'),
-  failed: z.number().int().nonnegative('Failed tests must be a non-negative integer'),
-  skipped: z.number().int().nonnegative('Skipped tests must be a non-negative integer').optional(),
-  duration: z.string().optional(),
-  details: z.array(z.any()).optional()
-}).passthrough();
-
-/**
- * Schema for MIGRATION template data
- */
-const migrationDataSchema = z.object({
-  migrationName: z.string().min(1, 'Migration name is required'),
-  status: z.enum(['success', 'failure', 'pending']).optional(),
-  duration: z.string().optional(),
-  details: z.string().optional()
-}).passthrough();
-
-/**
- * Schema for CUSTOM_TABLE template data
- */
-const customTableDataSchema = z.object({
-  title: z.string().optional(),
-  headers: z.array(z.string()).min(1, 'At least one table header is required'),
-  rows: z.array(z.array(z.string())).min(1, 'At least one table row is required')
-}).passthrough();
 
 /**
  * Raw action inputs schema (before processing)
@@ -163,13 +99,13 @@ function validateTemplateData(template: string, data: any): any {
   try {
     switch (template) {
       case 'DEPLOYMENT':
-        return deploymentDataSchema.parse(data);
+        return deploymentTemplateSchema.parse(data);
       case 'TEST_RESULTS':
-        return testResultsDataSchema.parse(data);
+        return testResultsTemplateSchema.parse(data);
       case 'MIGRATION':
-        return migrationDataSchema.parse(data);
+        return migrationTemplateSchema.parse(data);
       case 'CUSTOM_TABLE':
-        return customTableDataSchema.parse(data);
+        return customTableTemplateSchema.parse(data);
       default:
         throw new Error(`Unknown template type: ${template}`);
     }
@@ -231,7 +167,7 @@ export function buildRequestConfig(inputs: ActionInputs): RequestConfig {
       '💡 Example with template:\n' +
       '  with:\n' +
       '    template: "DEPLOYMENT"\n' +
-      '    template-data: \'{"environment": "production", "status": "success"}\''
+      '    template-data: \'{"projectName": "My App", "deploymentStatus": "Ready", "deploymentLink": "https://vercel.com/deployments/abc123"}\''
     );
   }
 
@@ -278,7 +214,7 @@ export function buildRequestConfig(inputs: ActionInputs): RequestConfig {
         '  - Escape special characters properly\n' +
         '  - Validate JSON at https://jsonlint.com\n\n' +
         'Example:\n' +
-        '  template-data: \'{"environment": "production", "status": "success"}\''
+        '  template-data: \'{"projectName": "My App", "deploymentStatus": "Ready", "deploymentLink": "https://vercel.com/deployments/abc123"}\''
       );
     }
 
@@ -318,7 +254,7 @@ export function buildRequestConfig(inputs: ActionInputs): RequestConfig {
     // Simple comment mode - validate comment text
     let validatedComment: string;
     try {
-      validatedComment = commentSchema.parse(inputs.comment);
+      validatedComment = simpleCommentSchema.parse(inputs.comment);
     } catch (error) {
       if (error instanceof z.ZodError) {
         throw new Error(formatZodError(error));
