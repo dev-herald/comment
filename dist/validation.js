@@ -102,6 +102,16 @@ function formatZodError(error) {
                 messages.push(`     Expected: ${typeErr.expected}, Received: ${received}`);
             }
         }
+        else if (err.code === 'invalid_format') {
+            const formatErr = err;
+            const receivedValue = formatErr.input;
+            if (receivedValue === undefined || receivedValue === null || receivedValue === '') {
+                messages.push(`     Received: ${receivedValue === '' ? '(empty string)' : 'undefined'}`);
+            }
+            else {
+                messages.push(`     Received: "${receivedValue}"`);
+            }
+        }
         else if (err.code === 'invalid_value') {
             const valueErr = err;
             if (valueErr.values?.length) {
