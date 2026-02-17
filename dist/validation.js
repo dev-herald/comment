@@ -47,7 +47,7 @@ const constants_1 = require("@dev-herald/constants");
  * Schema for API key - non-empty string
  */
 const apiKeySchema = zod_1.z.string().min(1, {
-    message: 'API key is required and cannot be empty'
+    error: 'API key is required and cannot be empty'
 });
 /**
  * Raw action inputs schema (before processing)
@@ -59,13 +59,10 @@ const rawInputsSchema = zod_1.z.object({
     template: zod_1.z.string(),
     templateData: zod_1.z.string(),
     stickyId: zod_1.z.string(),
-    apiUrl: zod_1.z.string().url('API URL must be a valid HTTPS URL').startsWith('https://', {
-        message: 'API URL must use HTTPS for security'
-    })
+    apiUrl: zod_1.z
+        .url({ error: 'API URL must be a valid HTTPS URL' })
+        .startsWith('https://', { error: 'API URL must use HTTPS for security' })
 });
-// ============================================================================
-// Utility Functions
-// ============================================================================
 /**
  * Formats Zod errors into a human-readable message
  */
@@ -76,26 +73,27 @@ function formatZodError(error) {
     issues.forEach((err, index) => {
         const fieldPath = err.path.length > 0 ? err.path.join('.') : 'input';
         messages.push(`  ${index + 1}. Field "${fieldPath}": ${err.message}`);
-        // Add context for specific error types using type guards and any for complex types
+        // Add context for specific error types (Zod v4 issue shapes)
         if (err.code === 'invalid_type') {
             const typeErr = err;
-            if (typeErr.expected && typeErr.received) {
-                messages.push(`     Expected: ${typeErr.expected}, Received: ${typeErr.received}`);
+            if (typeErr.expected != null) {
+                const received = typeErr.input !== undefined ? typeof typeErr.input : 'undefined';
+                messages.push(`     Expected: ${typeErr.expected}, Received: ${received}`);
             }
         }
         else if (err.code === 'invalid_value') {
             const valueErr = err;
-            if (valueErr.options && Array.isArray(valueErr.options)) {
-                messages.push(`     Allowed values: ${valueErr.options.join(', ')}`);
+            if (valueErr.values?.length) {
+                messages.push(`     Allowed values: ${valueErr.values.join(', ')}`);
             }
         }
         else if (err.code === 'too_small') {
             const smallErr = err;
             if (smallErr.minimum !== undefined) {
-                if (smallErr.type === 'string') {
+                if (smallErr.origin === 'string') {
                     messages.push(`     Minimum length: ${smallErr.minimum} characters`);
                 }
-                else if (smallErr.type === 'number') {
+                else if (smallErr.origin === 'number' || smallErr.origin === 'int') {
                     messages.push(`     Minimum value: ${smallErr.minimum}`);
                 }
             }
@@ -103,10 +101,10 @@ function formatZodError(error) {
         else if (err.code === 'too_big') {
             const bigErr = err;
             if (bigErr.maximum !== undefined) {
-                if (bigErr.type === 'string') {
+                if (bigErr.origin === 'string') {
                     messages.push(`     Maximum length: ${bigErr.maximum} characters`);
                 }
-                else if (bigErr.type === 'number') {
+                else if (bigErr.origin === 'number' || bigErr.origin === 'int') {
                     messages.push(`     Maximum value: ${bigErr.maximum}`);
                 }
             }

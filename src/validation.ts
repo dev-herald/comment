@@ -20,7 +20,7 @@ import type { ActionInputs, RequestConfig } from './types';
  * Schema for API key - non-empty string
  */
 const apiKeySchema = z.string().min(1, {
-  message: 'API key is required and cannot be empty'
+  error: 'API key is required and cannot be empty'
 });
 
 /**
@@ -33,62 +33,66 @@ const rawInputsSchema = z.object({
   template: z.string(),
   templateData: z.string(),
   stickyId: z.string(),
-  apiUrl: z.string().url('API URL must be a valid HTTPS URL').startsWith('https://', {
-    message: 'API URL must use HTTPS for security'
-  })
+  apiUrl: z
+    .url({ error: 'API URL must be a valid HTTPS URL' })
+    .startsWith('https://', { error: 'API URL must use HTTPS for security' })
 });
 
 // ============================================================================
 // Utility Functions
 // ============================================================================
 
+/** Zod v4 issue type (from z.core) */
+type ZodIssue = z.core.$ZodIssue;
+
 /**
  * Formats Zod errors into a human-readable message
  */
 export function formatZodError(error: z.ZodError): string {
   const messages: string[] = [];
-  
+
   messages.push('❌ Validation failed:\n');
-  
+
   const issues = error.issues;
-  issues.forEach((err: z.ZodIssue, index: number) => {
+  issues.forEach((err: ZodIssue, index: number) => {
     const fieldPath = err.path.length > 0 ? err.path.join('.') : 'input';
     messages.push(`  ${index + 1}. Field "${fieldPath}": ${err.message}`);
-    
-    // Add context for specific error types using type guards and any for complex types
+
+    // Add context for specific error types (Zod v4 issue shapes)
     if (err.code === 'invalid_type') {
-      const typeErr = err as any;
-      if (typeErr.expected && typeErr.received) {
-        messages.push(`     Expected: ${typeErr.expected}, Received: ${typeErr.received}`);
+      const typeErr = err as z.core.$ZodIssueInvalidType;
+      if (typeErr.expected != null) {
+        const received = typeErr.input !== undefined ? typeof typeErr.input : 'undefined';
+        messages.push(`     Expected: ${typeErr.expected}, Received: ${received}`);
       }
     } else if (err.code === 'invalid_value') {
-      const valueErr = err as any;
-      if (valueErr.options && Array.isArray(valueErr.options)) {
-        messages.push(`     Allowed values: ${valueErr.options.join(', ')}`);
+      const valueErr = err as z.core.$ZodIssueInvalidValue;
+      if (valueErr.values?.length) {
+        messages.push(`     Allowed values: ${valueErr.values.join(', ')}`);
       }
     } else if (err.code === 'too_small') {
-      const smallErr = err as any;
+      const smallErr = err as z.core.$ZodIssueTooSmall;
       if (smallErr.minimum !== undefined) {
-        if (smallErr.type === 'string') {
+        if (smallErr.origin === 'string') {
           messages.push(`     Minimum length: ${smallErr.minimum} characters`);
-        } else if (smallErr.type === 'number') {
+        } else if (smallErr.origin === 'number' || smallErr.origin === 'int') {
           messages.push(`     Minimum value: ${smallErr.minimum}`);
         }
       }
     } else if (err.code === 'too_big') {
-      const bigErr = err as any;
+      const bigErr = err as z.core.$ZodIssueTooBig;
       if (bigErr.maximum !== undefined) {
-        if (bigErr.type === 'string') {
+        if (bigErr.origin === 'string') {
           messages.push(`     Maximum length: ${bigErr.maximum} characters`);
-        } else if (bigErr.type === 'number') {
+        } else if (bigErr.origin === 'number' || bigErr.origin === 'int') {
           messages.push(`     Maximum value: ${bigErr.maximum}`);
         }
       }
     }
   });
-  
+
   messages.push('\n💡 Please check your workflow file and ensure all inputs are correct.');
-  
+
   return messages.join('\n');
 }
 
