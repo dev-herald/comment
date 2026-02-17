@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.deploymentStatusSchema = void 0;
 exports.formatZodError = formatZodError;
 exports.getActionInputs = getActionInputs;
 exports.validateInputs = validateInputs;
@@ -40,6 +41,26 @@ exports.buildRequestConfig = buildRequestConfig;
 const core = __importStar(require("@actions/core"));
 const zod_1 = require("zod");
 const constants_1 = require("@dev-herald/constants");
+// ============================================================================
+// Deployment Status Enum + Enhanced Schema
+// ============================================================================
+/**
+ * Enum of valid deployment statuses.
+ * Values match the keys of DEPLOYMENT_STATUS_IMGS - TypeScript will error at
+ * compile time if this ever drifts out of sync with the constants package.
+ */
+exports.deploymentStatusSchema = zod_1.z.enum(['building', 'queued', 'success', 'failed']);
+/**
+ * Enhanced deployment schema that:
+ *  - Constrains deploymentStatus to the known enum values
+ *  - Auto-defaults statusIconUrl based on deploymentStatus when not provided
+ */
+const enhancedDeploymentTemplateSchema = constants_1.deploymentTemplateSchema
+    .extend({ deploymentStatus: exports.deploymentStatusSchema })
+    .transform((data) => ({
+    ...data,
+    statusIconUrl: data.statusIconUrl ?? constants_1.DEPLOYMENT_STATUS_IMGS[data.deploymentStatus]
+}));
 // ============================================================================
 // Local Schemas (Action-specific)
 // ============================================================================
@@ -120,7 +141,7 @@ function validateTemplateData(template, data) {
     try {
         switch (template) {
             case 'DEPLOYMENT':
-                return constants_1.deploymentTemplateSchema.parse(data);
+                return enhancedDeploymentTemplateSchema.parse(data);
             case 'TEST_RESULTS':
                 return constants_1.testResultsTemplateSchema.parse(data);
             case 'MIGRATION':
@@ -184,7 +205,7 @@ function buildRequestConfig(inputs) {
             '💡 Example with template:\n' +
             '  with:\n' +
             '    template: "DEPLOYMENT"\n' +
-            '    template-data: \'{"projectName": "My App", "deploymentStatus": "Ready", "deploymentLink": "https://vercel.com/deployments/abc123"}\'');
+            '    template-data: \'{"projectName": "My App", "deploymentStatus": "success", "deploymentLink": "https://vercel.com/deployments/abc123"}\'');
     }
     if (hasComment && hasTemplate) {
         throw new Error('❌ Cannot provide both "comment" and "template" - choose one mode\n\n' +
@@ -223,7 +244,7 @@ function buildRequestConfig(inputs) {
                 '  - Escape special characters properly\n' +
                 '  - Validate JSON at https://jsonlint.com\n\n' +
                 'Example:\n' +
-                '  template-data: \'{"projectName": "My App", "deploymentStatus": "Ready", "deploymentLink": "https://vercel.com/deployments/abc123"}\'');
+                '  template-data: \'{"projectName": "My App", "deploymentStatus": "success", "deploymentLink": "https://vercel.com/deployments/abc123"}\'');
         }
         // Validate template-specific data structure
         const validatedData = validateTemplateData(validatedTemplate, parsedData);

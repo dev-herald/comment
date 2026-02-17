@@ -8,9 +8,36 @@ import {
   deploymentTemplateSchema,
   testResultsTemplateSchema,
   migrationTemplateSchema,
-  customTableTemplateSchema
+  customTableTemplateSchema,
+  DEPLOYMENT_STATUS_IMGS
 } from '@dev-herald/constants';
 import type { ActionInputs, RequestConfig } from './types';
+
+// ============================================================================
+// Deployment Status Enum + Enhanced Schema
+// ============================================================================
+
+/**
+ * Enum of valid deployment statuses.
+ * Values match the keys of DEPLOYMENT_STATUS_IMGS - TypeScript will error at
+ * compile time if this ever drifts out of sync with the constants package.
+ */
+export const deploymentStatusSchema = z.enum(
+  ['building', 'queued', 'success', 'failed'] satisfies Array<keyof typeof DEPLOYMENT_STATUS_IMGS>
+);
+export type DeploymentStatus = z.infer<typeof deploymentStatusSchema>;
+
+/**
+ * Deployment schema with:
+ *  - deploymentStatus constrained to the known enum values
+ *  - statusIconUrl auto-defaulted from DEPLOYMENT_STATUS_IMGS when not provided
+ */
+const deploymentSchema = deploymentTemplateSchema
+  .extend({ deploymentStatus: deploymentStatusSchema })
+  .transform((data) => ({
+    ...data,
+    statusIconUrl: data.statusIconUrl ?? DEPLOYMENT_STATUS_IMGS[data.deploymentStatus]
+  }));
 
 // ============================================================================
 // Local Schemas (Action-specific)
@@ -103,7 +130,7 @@ function validateTemplateData(template: string, data: any): any {
   try {
     switch (template) {
       case 'DEPLOYMENT':
-        return deploymentTemplateSchema.parse(data);
+        return deploymentSchema.parse(data);
       case 'TEST_RESULTS':
         return testResultsTemplateSchema.parse(data);
       case 'MIGRATION':
@@ -171,7 +198,7 @@ export function buildRequestConfig(inputs: ActionInputs): RequestConfig {
       '💡 Example with template:\n' +
       '  with:\n' +
       '    template: "DEPLOYMENT"\n' +
-      '    template-data: \'{"projectName": "My App", "deploymentStatus": "Ready", "deploymentLink": "https://vercel.com/deployments/abc123"}\''
+      '    template-data: \'{"projectName": "My App", "deploymentStatus": "success", "deploymentLink": "https://vercel.com/deployments/abc123"}\''
     );
   }
 
@@ -218,7 +245,7 @@ export function buildRequestConfig(inputs: ActionInputs): RequestConfig {
         '  - Escape special characters properly\n' +
         '  - Validate JSON at https://jsonlint.com\n\n' +
         'Example:\n' +
-        '  template-data: \'{"projectName": "My App", "deploymentStatus": "Ready", "deploymentLink": "https://vercel.com/deployments/abc123"}\''
+        '  template-data: \'{"projectName": "My App", "deploymentStatus": "success", "deploymentLink": "https://vercel.com/deployments/abc123"}\''
       );
     }
 

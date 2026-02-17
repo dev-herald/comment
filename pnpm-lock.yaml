@@ -15,8 +15,8 @@ importers:
         specifier: ^6.0.0
         version: 6.0.1
       '@dev-herald/constants':
-        specifier: ^1.0.5
-        version: 1.0.5
+        specifier: ^1.0.7
+        version: 1.0.7
       zod:
         specifier: ^4.2.1
         version: 4.2.1
@@ -48,8 +48,8 @@ packages:
   '@actions/io@1.1.3':
     resolution: {integrity: sha512-wi9JjgKLYS7U/z8PPbco+PvTb/nRWjeoFlJ1Qer83k/3C5PHQi28hiVdeE2kHXmIL99mQFawx8qt/JPjZilJ8Q==}
 
-  '@dev-herald/constants@1.0.5':
-    resolution: {integrity: sha512-QkWluWBJb5/VYyicOsxpRwgBX5c+qYg4WcJOrxe54y3WDpRwA0eaN4y6y40kfN867fxxJV0kb/NohY9t8U6PCQ==, tarball: https://npm.pkg.github.com/download/@dev-herald/constants/1.0.5/3833dd91e435c391e52ca9076e49ad877a3a3b93}
+  '@dev-herald/constants@1.0.7':
+    resolution: {integrity: sha512-87x1n723HJFmpnmebEYeNlxn14fBdYHaDGWxPNwt1CDmD2EYOs6xDj/LTPtEHxnWMwuvvGbMOgek9f1znPJPLQ==, tarball: https://npm.pkg.github.com/download/@dev-herald/constants/1.0.7/1775efb250749c30f99f4ff45cd953b7d4558586}
 
   '@fastify/busboy@2.1.1':
     resolution: {integrity: sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA==}
@@ -175,7 +175,7 @@ snapshots:
 
   '@actions/io@1.1.3': {}
 
-  '@dev-herald/constants@1.0.5':
+  '@dev-herald/constants@1.0.7':
     dependencies:
       zod: 4.3.6
 
