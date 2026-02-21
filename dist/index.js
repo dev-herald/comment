@@ -3195,7 +3195,7 @@ function copyFile(srcFile, destFile, force) {
 
 /***/ }),
 
-/***/ 7802:
+/***/ 4019:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 "use strict";
@@ -3252,9 +3252,9 @@ var import_zod4 = __nccwpck_require__(7151);
 var DEPLOYMENT_STATUSES = ["building", "queued", "success", "failed"];
 var deploymentTemplateSchema = import_zod4.z.object({
   projectName: import_zod4.z.string().min(1, "Project name is required").describe("The name of the project"),
-  projectLink: import_zod4.z.url("Project link must be a valid URL").optional().describe("Optional link to the project"),
   deploymentStatus: import_zod4.z.enum(DEPLOYMENT_STATUSES).describe("Status of the deployment"),
-  deploymentLink: import_zod4.z.url("Deployment link must be a valid URL").describe("Link to the deployment"),
+  projectLink: import_zod4.z.url("Project link must be a valid URL").optional().describe("Optional link to the project"),
+  deploymentLink: import_zod4.z.url("Deployment link must be a valid URL").optional().describe("Link to the deployment"),
   previewLink: import_zod4.z.url("Preview link must be a valid URL").optional().describe("Optional link to the preview deployment"),
   commentsLink: import_zod4.z.url("Comments link must be a valid URL").optional().describe("Optional link to PR comments"),
   statusIconUrl: import_zod4.z.url("Status icon URL must be a valid URL").optional().describe("Optional icon URL to display next to the deployment status"),
@@ -26201,7 +26201,7 @@ exports.validateInputs = validateInputs;
 exports.buildRequestConfig = buildRequestConfig;
 const core = __importStar(__nccwpck_require__(6966));
 const zod_1 = __nccwpck_require__(8661);
-const constants_1 = __nccwpck_require__(7802);
+const constants_1 = __nccwpck_require__(4019);
 // ============================================================================
 // Deployment Status Enum + Enhanced Schema
 // ============================================================================
@@ -26261,6 +26261,16 @@ function formatZodError(error) {
             if (typeErr.expected != null) {
                 const received = typeErr.input !== undefined ? typeof typeErr.input : 'undefined';
                 messages.push(`     Expected: ${typeErr.expected}, Received: ${received}`);
+            }
+        }
+        else if (err.code === 'invalid_format') {
+            const formatErr = err;
+            const receivedValue = formatErr.input;
+            if (receivedValue === undefined || receivedValue === null || receivedValue === '') {
+                messages.push(`     Received: ${receivedValue === '' ? '(empty string)' : 'undefined'}`);
+            }
+            else {
+                messages.push(`     Received: "${receivedValue}"`);
             }
         }
         else if (err.code === 'invalid_value') {
