@@ -26245,6 +26245,23 @@ const rawInputsSchema = zod_1.z.object({
         .url({ error: 'API URL must be a valid HTTPS URL' })
         .startsWith('https://', { error: 'API URL must use HTTPS for security' })
 });
+// ============================================================================
+// Utility Functions
+// ============================================================================
+/**
+ * Recursively converts empty strings to undefined so optional URL/string fields
+ * are treated as absent rather than triggering format validation failures.
+ */
+function stripEmptyStrings(obj) {
+    return Object.fromEntries(Object.entries(obj).map(([key, value]) => {
+        if (typeof value === 'string' && value.trim() === '')
+            return [key, undefined];
+        if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+            return [key, stripEmptyStrings(value)];
+        }
+        return [key, value];
+    }));
+}
 /**
  * Formats Zod errors into a human-readable message
  */
@@ -26309,16 +26326,17 @@ function formatZodError(error) {
  * Validates template-specific data based on template type
  */
 function validateTemplateData(template, data) {
+    const sanitised = stripEmptyStrings(data);
     try {
         switch (template) {
             case 'DEPLOYMENT':
-                return deploymentSchema.parse(data);
+                return deploymentSchema.parse(sanitised);
             case 'TEST_RESULTS':
-                return constants_1.testResultsTemplateSchema.parse(data);
+                return constants_1.testResultsTemplateSchema.parse(sanitised);
             case 'MIGRATION':
-                return constants_1.migrationTemplateSchema.parse(data);
+                return constants_1.migrationTemplateSchema.parse(sanitised);
             case 'CUSTOM_TABLE':
-                return constants_1.customTableTemplateSchema.parse(data);
+                return constants_1.customTableTemplateSchema.parse(sanitised);
             default:
                 throw new Error(`Unknown template type: ${template}`);
         }
