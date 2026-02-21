@@ -69,6 +69,22 @@ const rawInputsSchema = z.object({
 // Utility Functions
 // ============================================================================
 
+/**
+ * Recursively converts empty strings to undefined so optional URL/string fields
+ * are treated as absent rather than triggering format validation failures.
+ */
+function stripEmptyStrings(obj: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(obj).map(([key, value]) => {
+      if (typeof value === 'string' && value.trim() === '') return [key, undefined];
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        return [key, stripEmptyStrings(value as Record<string, unknown>)];
+      }
+      return [key, value];
+    })
+  );
+}
+
 /** Zod v4 issue type (from z.core) */
 type ZodIssue = z.core.$ZodIssue;
 
@@ -135,16 +151,17 @@ export function formatZodError(error: z.ZodError): string {
  * Validates template-specific data based on template type
  */
 function validateTemplateData(template: string, data: any): any {
+  const sanitised = stripEmptyStrings(data as Record<string, unknown>);
   try {
     switch (template) {
       case 'DEPLOYMENT':
-        return deploymentSchema.parse(data);
+        return deploymentSchema.parse(sanitised);
       case 'TEST_RESULTS':
-        return testResultsTemplateSchema.parse(data);
+        return testResultsTemplateSchema.parse(sanitised);
       case 'MIGRATION':
-        return migrationTemplateSchema.parse(data);
+        return migrationTemplateSchema.parse(sanitised);
       case 'CUSTOM_TABLE':
-        return customTableTemplateSchema.parse(data);
+        return customTableTemplateSchema.parse(sanitised);
       default:
         throw new Error(`Unknown template type: ${template}`);
     }

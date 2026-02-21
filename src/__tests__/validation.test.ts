@@ -180,6 +180,104 @@ describe('buildRequestConfig – deployment template errors', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Deployment template – empty string sanitisation
+// ---------------------------------------------------------------------------
+
+describe('buildRequestConfig – empty string sanitisation', () => {
+  it('does not throw when previewLink is an empty string', () => {
+    const inputs = makeDeploymentInputs({
+      templateData: JSON.stringify({
+        projectName: 'My App',
+        deploymentStatus: 'failed',
+        deploymentLink: 'https://vercel.com/deployments/abc123',
+        previewLink: '',
+      }),
+    });
+    expect(() => buildRequestConfig(inputs)).not.toThrow();
+  });
+
+  it('omits previewLink from the request body when passed as empty string', () => {
+    const inputs = makeDeploymentInputs({
+      templateData: JSON.stringify({
+        projectName: 'My App',
+        deploymentStatus: 'failed',
+        deploymentLink: 'https://vercel.com/deployments/abc123',
+        previewLink: '',
+      }),
+    });
+    const config = buildRequestConfig(inputs);
+    expect((config.requestBody as TemplateCommentRequest).data.previewLink).toBeUndefined();
+  });
+
+  it('does not throw when deploymentLink is an empty string', () => {
+    const inputs = makeDeploymentInputs({
+      templateData: JSON.stringify({
+        projectName: 'My App',
+        deploymentStatus: 'success',
+        deploymentLink: '',
+      }),
+    });
+    expect(() => buildRequestConfig(inputs)).not.toThrow();
+  });
+
+  it('does not throw when statusIconUrl is an empty string (falls back to default)', () => {
+    const inputs = makeDeploymentInputs({
+      templateData: JSON.stringify({
+        projectName: 'My App',
+        deploymentStatus: 'building',
+        statusIconUrl: '',
+      }),
+    });
+    const config = buildRequestConfig(inputs);
+    expect((config.requestBody as TemplateCommentRequest).data.statusIconUrl).toBe(
+      'https://dev-herald.com/imgs/building.svg'
+    );
+  });
+
+  it('does not throw when all optional URL fields are empty strings simultaneously', () => {
+    const inputs = makeDeploymentInputs({
+      templateData: JSON.stringify({
+        projectName: 'My App',
+        deploymentStatus: 'queued',
+        projectLink: '',
+        deploymentLink: '',
+        previewLink: '',
+        commentsLink: '',
+        statusIconUrl: '',
+      }),
+    });
+    expect(() => buildRequestConfig(inputs)).not.toThrow();
+  });
+
+  it('strips whitespace-only strings just like empty strings', () => {
+    const inputs = makeDeploymentInputs({
+      templateData: JSON.stringify({
+        projectName: 'My App',
+        deploymentStatus: 'success',
+        previewLink: '   ',
+      }),
+    });
+    const config = buildRequestConfig(inputs);
+    expect((config.requestBody as TemplateCommentRequest).data.previewLink).toBeUndefined();
+  });
+
+  it('preserves a valid URL even when other fields are empty strings', () => {
+    const inputs = makeDeploymentInputs({
+      templateData: JSON.stringify({
+        projectName: 'My App',
+        deploymentStatus: 'success',
+        deploymentLink: 'https://vercel.com/deployments/abc123',
+        previewLink: '',
+      }),
+    });
+    const config = buildRequestConfig(inputs);
+    expect((config.requestBody as TemplateCommentRequest).data.deploymentLink).toBe(
+      'https://vercel.com/deployments/abc123'
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // validateInputs – basic input errors
 // ---------------------------------------------------------------------------
 
