@@ -56,6 +56,7 @@ export interface ActionInputs {
   comment: string;
   template: string;
   templateData: string;
+  resultLocation: string;
   stickyId: string;
   apiUrl: string;
 }

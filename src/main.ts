@@ -2,6 +2,7 @@ import * as core from '@actions/core';
 import { getActionInputs, validateInputs, buildRequestConfig } from './validation';
 import { buildHeaders, makeHttpRequest } from './api';
 import { processResponse } from './output';
+import { parseResultFile } from './parsers/index';
 
 /**
  * Main action entry point
@@ -15,6 +16,16 @@ async function run(): Promise<void> {
     const inputs = getActionInputs();
     validateInputs(inputs);
     core.info('✅ Input validation passed');
+
+    // ============================================================
+    // PHASE 1.5: PARSE TEST RESULTS FILE (if result-location set)
+    // ============================================================
+    if (inputs.resultLocation && inputs.resultLocation.trim().length > 0) {
+      core.info(`📂 Parsing test results from: ${inputs.resultLocation}`);
+      const parsed = await parseResultFile(inputs.resultLocation);
+      inputs.templateData = JSON.stringify(parsed);
+      core.info(`✅ Parsed ${parsed.testSuites.length} test suite(s): ${parsed.summary}`);
+    }
 
     // Build and validate request configuration
     const config = buildRequestConfig(inputs);

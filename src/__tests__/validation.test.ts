@@ -27,6 +27,7 @@ function makeDeploymentInputs(overrides: Partial<ActionInputs> = {}): ActionInpu
       deploymentStatus: 'success',
       deploymentLink: 'https://vercel.com/deployments/abc123',
     }),
+    resultLocation: '',
     stickyId: '',
     apiUrl: BASE_URL,
     ...overrides,
@@ -120,9 +121,9 @@ describe('buildRequestConfig – deployment template happy paths', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildRequestConfig – deployment template errors', () => {
-  it('throws when templateData is empty', () => {
+  it('throws when templateData is empty and no result-location is set', () => {
     const inputs = makeDeploymentInputs({ templateData: '' });
-    expect(() => buildRequestConfig(inputs)).toThrow('template-data is required');
+    expect(() => buildRequestConfig(inputs)).toThrow('template-data (or result-location) is required');
   });
 
   it('throws when templateData is not valid JSON', () => {
@@ -289,6 +290,7 @@ describe('validateInputs', () => {
       comment: '',
       template: '',
       templateData: '',
+      resultLocation: '',
       stickyId: '',
       apiUrl: BASE_URL,
       ...overrides,

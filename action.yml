@@ -17,7 +17,10 @@ inputs:
     description: 'Template type for rich comments (use with template-data). Options: DEPLOYMENT, TEST_RESULTS, MIGRATION, CUSTOM_TABLE'
     required: false
   template-data:
-    description: 'JSON string with template-specific data (required when using template). See README for schema examples.'
+    description: 'JSON string with template-specific data (required when using template, unless result-location is provided). See README for schema examples.'
+    required: false
+  result-location:
+    description: 'Path to a test results file (e.g. playwright-report/results.json). When provided with template: TEST_RESULTS, the action reads and parses this file automatically — no template-data needed. Supported formats: Playwright JSON reporter.'
     required: false
   sticky-id:
     description: 'Optional identifier for updateable comments. Comments with the same sticky-id will update instead of creating new ones. Example: "deployment-status"'

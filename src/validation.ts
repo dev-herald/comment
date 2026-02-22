@@ -59,6 +59,7 @@ const rawInputsSchema = z.object({
   comment: z.string(),
   template: z.string(),
   templateData: z.string(),
+  resultLocation: z.string(),
   stickyId: z.string(),
   apiUrl: z
     .url({ error: 'API URL must be a valid HTTPS URL' })
@@ -187,6 +188,7 @@ export function getActionInputs(): ActionInputs {
     comment: core.getInput('comment', { required: false }),
     template: core.getInput('template', { required: false }),
     templateData: core.getInput('template-data', { required: false }),
+    resultLocation: core.getInput('result-location', { required: false }),
     stickyId: core.getInput('sticky-id', { required: false }),
     apiUrl: core.getInput('api-url', { required: false }) || 'https://dev-herald.com/api/v1/github'
   };
@@ -249,13 +251,20 @@ export function buildRequestConfig(inputs: ActionInputs): RequestConfig {
     }
 
     // Parse and validate template data
-    if (!inputs.templateData || inputs.templateData.trim().length === 0) {
+    const hasTemplateData = inputs.templateData && inputs.templateData.trim().length > 0;
+    const hasResultLocation = inputs.resultLocation && inputs.resultLocation.trim().length > 0;
+
+    if (!hasTemplateData && !hasResultLocation) {
       throw new Error(
-        '❌ template-data is required when using template mode\n\n' +
+        '❌ template-data (or result-location) is required when using template mode\n\n' +
         `💡 The ${inputs.template} template requires JSON data. Example:\n` +
         '  with:\n' +
         `    template: "${inputs.template}"\n` +
-        '    template-data: \'{"key": "value"}\''
+        '    template-data: \'{"key": "value"}\'\n\n' +
+        '💡 Or, for TEST_RESULTS, point directly at your test output file:\n' +
+        '  with:\n' +
+        '    template: "TEST_RESULTS"\n' +
+        '    result-location: playwright-report/results.json'
       );
     }
 

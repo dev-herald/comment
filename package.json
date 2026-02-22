@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "package": "npm run build && ncc build src/main.ts -o dist --source-map --license licenses.txt",
-    "test": "vitest run"
+    "test": "pnpm generate-test-data && vitest run",
+    "generate-test-data": "playwright test --config sample-tests/playwright.config.all-passing.ts; playwright test --config sample-tests/playwright.config.with-failures.ts || true"
   },
   "keywords": [
     "github-action",
@@ -22,6 +23,7 @@
     "zod": "^4.2.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/node": "^20.10.0",
     "@vercel/ncc": "^0.38.1",
     "typescript": "^5.3.3",
