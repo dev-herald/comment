@@ -164,3 +164,87 @@ function loadFixture(name) {
         (0, vitest_1.expect)(result.testSuites).toHaveLength(1);
     });
 });
+// ============================================================================
+// parseTestResultsInput — YAML-like input parsing
+// ============================================================================
+(0, vitest_1.describe)('parseTestResultsInput', () => {
+    (0, vitest_1.it)('parses a two-entry input into entries with name and path', () => {
+        const input = `
+- name: Unit Tests
+  path: vitest-results/unit.json
+- name: E2E Tests
+  path: playwright-results/results.json
+    `.trim();
+        const entries = (0, index_1.parseTestResultsInput)(input);
+        (0, vitest_1.expect)(entries).toHaveLength(2);
+        (0, vitest_1.expect)(entries[0]).toEqual({ name: 'Unit Tests', path: 'vitest-results/unit.json' });
+        (0, vitest_1.expect)(entries[1]).toEqual({ name: 'E2E Tests', path: 'playwright-results/results.json' });
+    });
+    (0, vitest_1.it)('parses a single entry', () => {
+        const input = `- name: Integration Tests\n  path: results/integration.json`;
+        const entries = (0, index_1.parseTestResultsInput)(input);
+        (0, vitest_1.expect)(entries).toHaveLength(1);
+        (0, vitest_1.expect)(entries[0]).toEqual({ name: 'Integration Tests', path: 'results/integration.json' });
+    });
+    (0, vitest_1.it)('strips surrounding quotes from values', () => {
+        const input = `- name: "Quoted Name"\n  path: 'some/path.json'`;
+        const entries = (0, index_1.parseTestResultsInput)(input);
+        (0, vitest_1.expect)(entries[0].name).toBe('Quoted Name');
+        (0, vitest_1.expect)(entries[0].path).toBe('some/path.json');
+    });
+    (0, vitest_1.it)('ignores blank lines and comment lines', () => {
+        const input = `
+# This is a comment
+- name: Unit Tests
+  path: unit.json
+
+# Another comment
+- name: E2E Tests
+  path: e2e.json
+    `.trim();
+        const entries = (0, index_1.parseTestResultsInput)(input);
+        (0, vitest_1.expect)(entries).toHaveLength(2);
+    });
+    (0, vitest_1.it)('throws when input contains no valid entries', () => {
+        (0, vitest_1.expect)(() => (0, index_1.parseTestResultsInput)('   ')).toThrow('Could not parse any entries');
+        (0, vitest_1.expect)(() => (0, index_1.parseTestResultsInput)('# just a comment')).toThrow('Could not parse any entries');
+    });
+});
+// ============================================================================
+// parseNamedResultEntries — aggregation
+// ============================================================================
+(0, vitest_1.describe)('parseNamedResultEntries', () => {
+    const playwrightFixturesDir = path_1.default.join(__dirname, '../test-data/playwright');
+    (0, vitest_1.it)('produces one TestSuite per named entry using the entry name', async () => {
+        const entries = [
+            { name: 'Unit Tests', path: path_1.default.join(FIXTURES_DIR, 'all-passing.json') },
+            { name: 'E2E Tests', path: path_1.default.join(playwrightFixturesDir, 'all-passing.json') },
+        ];
+        const result = await (0, index_1.parseNamedResultEntries)(entries);
+        (0, vitest_1.expect)(result.testSuites).toHaveLength(2);
+        (0, vitest_1.expect)(result.testSuites[0].name).toBe('Unit Tests');
+        (0, vitest_1.expect)(result.testSuites[1].name).toBe('E2E Tests');
+    });
+    (0, vitest_1.it)('aggregates all internal files into a single suite per entry', async () => {
+        const entries = [{ name: 'Unit Tests', path: path_1.default.join(FIXTURES_DIR, 'all-passing.json') }];
+        const result = await (0, index_1.parseNamedResultEntries)(entries);
+        (0, vitest_1.expect)(result.testSuites[0].passed).toBe(7);
+        (0, vitest_1.expect)(result.testSuites[0].skipped).toBe(1);
+    });
+    (0, vitest_1.it)('summary reflects combined totals across all named entries', async () => {
+        const entries = [
+            { name: 'Unit Tests', path: path_1.default.join(FIXTURES_DIR, 'all-passing.json') },
+            { name: 'E2E Tests', path: path_1.default.join(playwrightFixturesDir, 'all-passing.json') },
+        ];
+        const result = await (0, index_1.parseNamedResultEntries)(entries);
+        // Both fixtures: 7 passed + 1 skipped each = 14 passed, 2 skipped
+        (0, vitest_1.expect)(result.summary).toContain('14 passed');
+        (0, vitest_1.expect)(result.summary).toContain('2 suites');
+    });
+    (0, vitest_1.it)('includes failures in summary when present', async () => {
+        const entries = [{ name: 'Unit Tests', path: path_1.default.join(FIXTURES_DIR, 'with-failures.json') }];
+        const result = await (0, index_1.parseNamedResultEntries)(entries);
+        (0, vitest_1.expect)(result.summary).toMatch(/^2 failed/);
+        (0, vitest_1.expect)(result.testSuites[0].failed).toBe(2);
+    });
+});

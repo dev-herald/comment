@@ -53,9 +53,11 @@ async function run() {
         // ============================================================
         // PHASE 1.5: PARSE TEST RESULTS FILES (if test-results set)
         // ============================================================
-        if (inputs.testResults && inputs.testResults.length > 0) {
-            core.info(`📂 Parsing test results from: ${inputs.testResults.join(', ')}`);
-            const parsed = await (0, index_1.parseResultFiles)(inputs.testResults);
+        if (inputs.testResults && inputs.testResults.trim().length > 0) {
+            core.info('📂 Parsing test results...');
+            const entries = (0, index_1.parseTestResultsInput)(inputs.testResults);
+            core.info(`📋 Found ${entries.length} named suite(s): ${entries.map((e) => e.name).join(', ')}`);
+            const parsed = await (0, index_1.parseNamedResultEntries)(entries);
             inputs.templateData = JSON.stringify(parsed);
             core.info(`✅ Parsed ${parsed.testSuites.length} test suite(s): ${parsed.summary}`);
         }

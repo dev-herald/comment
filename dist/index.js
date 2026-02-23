@@ -25949,9 +25949,11 @@ async function run() {
         // ============================================================
         // PHASE 1.5: PARSE TEST RESULTS FILES (if test-results set)
         // ============================================================
-        if (inputs.testResults && inputs.testResults.length > 0) {
-            core.info(`📂 Parsing test results from: ${inputs.testResults.join(', ')}`);
-            const parsed = await (0, index_1.parseResultFiles)(inputs.testResults);
+        if (inputs.testResults && inputs.testResults.trim().length > 0) {
+            core.info('📂 Parsing test results...');
+            const entries = (0, index_1.parseTestResultsInput)(inputs.testResults);
+            core.info(`📋 Found ${entries.length} named suite(s): ${entries.map((e) => e.name).join(', ')}`);
+            const parsed = await (0, index_1.parseNamedResultEntries)(entries);
             inputs.templateData = JSON.stringify(parsed);
             core.info(`✅ Parsed ${parsed.testSuites.length} test suite(s): ${parsed.summary}`);
         }
@@ -26171,12 +26173,124 @@ function processResponse(response, mode) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseTestResultsInput = parseTestResultsInput;
+exports.parseNamedResultEntries = parseNamedResultEntries;
 exports.parseResultFile = parseResultFile;
 exports.parseResultFiles = parseResultFiles;
 const promises_1 = __nccwpck_require__(1943);
 const fs_1 = __nccwpck_require__(9896);
 const playwright_1 = __nccwpck_require__(686);
 const vitest_1 = __nccwpck_require__(5804);
+/**
+ * Parses the YAML-like `test-results` input into named entries.
+ *
+ * Expected format:
+ * ```yaml
+ * - name: Unit Tests
+ *   path: vitest-results/unit.json
+ * - name: E2E Tests
+ *   path: playwright-results/results.json
+ * ```
+ */
+function parseTestResultsInput(input) {
+    const entries = [];
+    let current = null;
+    for (const line of input.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#'))
+            continue;
+        if (trimmed.startsWith('- name:')) {
+            if (current?.name && current?.path)
+                entries.push(current);
+            current = { name: extractYamlValue(trimmed.slice('- name:'.length)) };
+        }
+        else if (trimmed.startsWith('name:') && current && !current.name) {
+            current.name = extractYamlValue(trimmed.slice('name:'.length));
+        }
+        else if (trimmed.startsWith('path:') && current) {
+            current.path = extractYamlValue(trimmed.slice('path:'.length));
+        }
+    }
+    if (current?.name && current?.path)
+        entries.push(current);
+    if (entries.length === 0) {
+        throw new Error('❌ Could not parse any entries from test-results input.\n\n' +
+            '💡 Expected format:\n' +
+            '    test-results: |\n' +
+            '      - name: Unit Tests\n' +
+            '        path: vitest-results/unit.json\n' +
+            '      - name: E2E Tests\n' +
+            '        path: playwright-results/results.json');
+    }
+    return entries;
+}
+function extractYamlValue(raw) {
+    const trimmed = raw.trim();
+    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+        (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+        return trimmed.slice(1, -1);
+    }
+    return trimmed;
+}
+function parseDurationToMs(duration) {
+    if (duration.endsWith('ms'))
+        return parseFloat(duration);
+    if (duration.endsWith('s'))
+        return parseFloat(duration) * 1000;
+    return 0;
+}
+function formatDuration(ms) {
+    if (ms >= 1000)
+        return `${(ms / 1000).toFixed(1)}s`;
+    return `${Math.round(ms)}ms`;
+}
+function aggregateToSuite(name, result) {
+    const passed = result.testSuites.reduce((sum, s) => sum + s.passed, 0);
+    const failed = result.testSuites.reduce((sum, s) => sum + s.failed, 0);
+    const skipped = result.testSuites.reduce((sum, s) => sum + (s.skipped ?? 0), 0);
+    const totalMs = result.testSuites.reduce((sum, s) => {
+        return sum + (s.duration ? parseDurationToMs(s.duration) : 0);
+    }, 0);
+    const suite = { name, passed, failed };
+    if (skipped > 0)
+        suite.skipped = skipped;
+    if (totalMs > 0)
+        suite.duration = formatDuration(totalMs);
+    return suite;
+}
+/**
+ * Reads and parses each named entry's result file, then aggregates all
+ * internal test files into a single TestSuite per entry.
+ */
+async function parseNamedResultEntries(entries) {
+    const testSuites = [];
+    for (const entry of entries) {
+        const result = await parseResultFile(entry.path);
+        testSuites.push(aggregateToSuite(entry.name, result));
+    }
+    const totalPassed = testSuites.reduce((sum, s) => sum + s.passed, 0);
+    const totalFailed = testSuites.reduce((sum, s) => sum + s.failed, 0);
+    const totalSkipped = testSuites.reduce((sum, s) => sum + (s.skipped ?? 0), 0);
+    const parts = [];
+    if (totalFailed > 0)
+        parts.push(`${totalFailed} failed`);
+    if (totalPassed > 0)
+        parts.push(`${totalPassed} passed`);
+    if (totalSkipped > 0)
+        parts.push(`${totalSkipped} skipped`);
+    const suiteWord = testSuites.length === 1 ? 'suite' : 'suites';
+    const summary = parts.length > 0
+        ? `${parts.join(', ')} across ${testSuites.length} ${suiteWord}`
+        : 'No tests ran';
+    return {
+        summary,
+        testSuites,
+        showTimestamp: true,
+    };
+}
+// ============================================================================
+// Internal helpers (used by named entry parsing and tests)
+// ============================================================================
 /**
  * Reads a single test result file from disk, auto-detects its format, and
  * returns a normalized ParsedTestResults object.
@@ -26189,7 +26303,7 @@ async function parseResultFile(filePath) {
     if (!(0, fs_1.existsSync)(filePath)) {
         throw new Error(`❌ Result file not found: "${filePath}"\n\n` +
             '💡 Make sure your test step runs before this action and the file path is correct.\n' +
-            '   Example: test-results: playwright-report/results.json');
+            '   Example: path: playwright-report/results.json');
     }
     let raw;
     try {
@@ -26566,7 +26680,7 @@ const rawInputsSchema = zod_1.z.object({
     comment: zod_1.z.string(),
     template: zod_1.z.string(),
     templateData: zod_1.z.string(),
-    testResults: zod_1.z.array(zod_1.z.string()),
+    testResults: zod_1.z.string(),
     stickyId: zod_1.z.string(),
     apiUrl: zod_1.z
         .url({ error: 'API URL must be a valid HTTPS URL' })
@@ -26688,7 +26802,7 @@ function getActionInputs() {
         comment: core.getInput('comment', { required: false }),
         template: core.getInput('template', { required: false }),
         templateData: core.getInput('template-data', { required: false }),
-        testResults: core.getMultilineInput('test-results', { required: false }),
+        testResults: core.getInput('test-results', { required: false }),
         stickyId: core.getInput('sticky-id', { required: false }),
         apiUrl: core.getInput('api-url', { required: false }) || 'https://dev-herald.com/api/v1/github'
     };
@@ -26744,7 +26858,7 @@ function buildRequestConfig(inputs) {
         }
         // Parse and validate template data
         const hasTemplateData = inputs.templateData && inputs.templateData.trim().length > 0;
-        const hasTestResults = inputs.testResults && inputs.testResults.length > 0;
+        const hasTestResults = inputs.testResults && inputs.testResults.trim().length > 0;
         if (!hasTemplateData && !hasTestResults) {
             throw new Error('❌ template-data (or test-results) is required when using template mode\n\n' +
                 `💡 The ${inputs.template} template requires JSON data. Example:\n` +
