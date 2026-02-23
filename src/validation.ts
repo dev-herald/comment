@@ -59,7 +59,7 @@ const rawInputsSchema = z.object({
   comment: z.string(),
   template: z.string(),
   templateData: z.string(),
-  testResults: z.array(z.string()),
+  testResults: z.string(),
   stickyId: z.string(),
   apiUrl: z
     .url({ error: 'API URL must be a valid HTTPS URL' })
@@ -188,7 +188,7 @@ export function getActionInputs(): ActionInputs {
     comment: core.getInput('comment', { required: false }),
     template: core.getInput('template', { required: false }),
     templateData: core.getInput('template-data', { required: false }),
-    testResults: core.getMultilineInput('test-results', { required: false }),
+    testResults: core.getInput('test-results', { required: false }),
     stickyId: core.getInput('sticky-id', { required: false }),
     apiUrl: core.getInput('api-url', { required: false }) || 'https://dev-herald.com/api/v1/github'
   };
@@ -252,7 +252,7 @@ export function buildRequestConfig(inputs: ActionInputs): RequestConfig {
 
     // Parse and validate template data
     const hasTemplateData = inputs.templateData && inputs.templateData.trim().length > 0;
-    const hasTestResults = inputs.testResults && inputs.testResults.length > 0;
+    const hasTestResults = inputs.testResults && inputs.testResults.trim().length > 0;
 
     if (!hasTemplateData && !hasTestResults) {
       throw new Error(

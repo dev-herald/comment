@@ -20,7 +20,18 @@ inputs:
     description: 'JSON string with template-specific data (required when using template, unless result-location is provided). See README for schema examples.'
     required: false
   test-results:
-    description: 'Path(s) to test result file(s). Supports multiple newline-separated paths. When provided with template: TEST_RESULTS, the action reads and parses these files automatically — no template-data needed. Supported formats: Playwright JSON reporter, Vitest JSON reporter.'
+    description: |
+      YAML list of named test result files. When provided with template: TEST_RESULTS,
+      the action reads and parses these files automatically — no template-data needed.
+      Each entry requires a display name and a path to a JSON reporter output file.
+      Supported formats: Playwright JSON reporter, Vitest JSON reporter.
+
+      Example:
+        test-results: |
+          - name: Unit Tests
+            path: vitest-results/unit.json
+          - name: E2E Tests
+            path: playwright-results/results.json
     required: false
   sticky-id:
     description: 'Optional identifier for updateable comments. Comments with the same sticky-id will update instead of creating new ones. Example: "deployment-status"'

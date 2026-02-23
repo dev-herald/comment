@@ -2,7 +2,7 @@ import * as core from '@actions/core';
 import { getActionInputs, validateInputs, buildRequestConfig } from './validation';
 import { buildHeaders, makeHttpRequest } from './api';
 import { processResponse } from './output';
-import { parseResultFiles } from './parsers/index';
+import { parseTestResultsInput, parseNamedResultEntries } from './parsers/index';
 
 /**
  * Main action entry point
@@ -20,9 +20,11 @@ async function run(): Promise<void> {
     // ============================================================
     // PHASE 1.5: PARSE TEST RESULTS FILES (if test-results set)
     // ============================================================
-    if (inputs.testResults && inputs.testResults.length > 0) {
-      core.info(`📂 Parsing test results from: ${inputs.testResults.join(', ')}`);
-      const parsed = await parseResultFiles(inputs.testResults);
+    if (inputs.testResults && inputs.testResults.trim().length > 0) {
+      core.info('📂 Parsing test results...');
+      const entries = parseTestResultsInput(inputs.testResults);
+      core.info(`📋 Found ${entries.length} named suite(s): ${entries.map((e) => e.name).join(', ')}`);
+      const parsed = await parseNamedResultEntries(entries);
       inputs.templateData = JSON.stringify(parsed);
       core.info(`✅ Parsed ${parsed.testSuites.length} test suite(s): ${parsed.summary}`);
     }

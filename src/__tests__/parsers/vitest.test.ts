@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { parseVitestReport, isVitestReport } from '../../parsers/vitest';
-import { parseResultFile, parseResultFiles } from '../../parsers/index';
+import { parseResultFile, parseResultFiles, parseTestResultsInput, parseNamedResultEntries } from '../../parsers/index';
 
 const FIXTURES_DIR = path.join(__dirname, '../test-data/vitest');
 
@@ -195,5 +195,101 @@ describe('parseResultFiles — merging multiple result files', () => {
   it('single file returns result directly without wrapping', async () => {
     const result = await parseResultFiles([path.join(FIXTURES_DIR, 'all-passing.json')]);
     expect(result.testSuites).toHaveLength(1);
+  });
+});
+
+// ============================================================================
+// parseTestResultsInput — YAML-like input parsing
+// ============================================================================
+
+describe('parseTestResultsInput', () => {
+  it('parses a two-entry input into entries with name and path', () => {
+    const input = `
+- name: Unit Tests
+  path: vitest-results/unit.json
+- name: E2E Tests
+  path: playwright-results/results.json
+    `.trim();
+    const entries = parseTestResultsInput(input);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toEqual({ name: 'Unit Tests', path: 'vitest-results/unit.json' });
+    expect(entries[1]).toEqual({ name: 'E2E Tests', path: 'playwright-results/results.json' });
+  });
+
+  it('parses a single entry', () => {
+    const input = `- name: Integration Tests\n  path: results/integration.json`;
+    const entries = parseTestResultsInput(input);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual({ name: 'Integration Tests', path: 'results/integration.json' });
+  });
+
+  it('strips surrounding quotes from values', () => {
+    const input = `- name: "Quoted Name"\n  path: 'some/path.json'`;
+    const entries = parseTestResultsInput(input);
+    expect(entries[0].name).toBe('Quoted Name');
+    expect(entries[0].path).toBe('some/path.json');
+  });
+
+  it('ignores blank lines and comment lines', () => {
+    const input = `
+# This is a comment
+- name: Unit Tests
+  path: unit.json
+
+# Another comment
+- name: E2E Tests
+  path: e2e.json
+    `.trim();
+    const entries = parseTestResultsInput(input);
+    expect(entries).toHaveLength(2);
+  });
+
+  it('throws when input contains no valid entries', () => {
+    expect(() => parseTestResultsInput('   ')).toThrow('Could not parse any entries');
+    expect(() => parseTestResultsInput('# just a comment')).toThrow('Could not parse any entries');
+  });
+});
+
+// ============================================================================
+// parseNamedResultEntries — aggregation
+// ============================================================================
+
+describe('parseNamedResultEntries', () => {
+  const playwrightFixturesDir = path.join(__dirname, '../test-data/playwright');
+
+  it('produces one TestSuite per named entry using the entry name', async () => {
+    const entries = [
+      { name: 'Unit Tests', path: path.join(FIXTURES_DIR, 'all-passing.json') },
+      { name: 'E2E Tests', path: path.join(playwrightFixturesDir, 'all-passing.json') },
+    ];
+    const result = await parseNamedResultEntries(entries);
+    expect(result.testSuites).toHaveLength(2);
+    expect(result.testSuites[0].name).toBe('Unit Tests');
+    expect(result.testSuites[1].name).toBe('E2E Tests');
+  });
+
+  it('aggregates all internal files into a single suite per entry', async () => {
+    const entries = [{ name: 'Unit Tests', path: path.join(FIXTURES_DIR, 'all-passing.json') }];
+    const result = await parseNamedResultEntries(entries);
+    expect(result.testSuites[0].passed).toBe(7);
+    expect(result.testSuites[0].skipped).toBe(1);
+  });
+
+  it('summary reflects combined totals across all named entries', async () => {
+    const entries = [
+      { name: 'Unit Tests', path: path.join(FIXTURES_DIR, 'all-passing.json') },
+      { name: 'E2E Tests', path: path.join(playwrightFixturesDir, 'all-passing.json') },
+    ];
+    const result = await parseNamedResultEntries(entries);
+    // Both fixtures: 7 passed + 1 skipped each = 14 passed, 2 skipped
+    expect(result.summary).toContain('14 passed');
+    expect(result.summary).toContain('2 suites');
+  });
+
+  it('includes failures in summary when present', async () => {
+    const entries = [{ name: 'Unit Tests', path: path.join(FIXTURES_DIR, 'with-failures.json') }];
+    const result = await parseNamedResultEntries(entries);
+    expect(result.summary).toMatch(/^2 failed/);
+    expect(result.testSuites[0].failed).toBe(2);
   });
 });
