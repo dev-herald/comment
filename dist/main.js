@@ -37,6 +37,7 @@ const core = __importStar(require("@actions/core"));
 const validation_1 = require("./validation");
 const api_1 = require("./api");
 const output_1 = require("./output");
+const index_1 = require("./parsers/index");
 /**
  * Main action entry point
  */
@@ -49,6 +50,15 @@ async function run() {
         const inputs = (0, validation_1.getActionInputs)();
         (0, validation_1.validateInputs)(inputs);
         core.info('✅ Input validation passed');
+        // ============================================================
+        // PHASE 1.5: PARSE TEST RESULTS FILES (if test-results set)
+        // ============================================================
+        if (inputs.testResults && inputs.testResults.length > 0) {
+            core.info(`📂 Parsing test results from: ${inputs.testResults.join(', ')}`);
+            const parsed = await (0, index_1.parseResultFiles)(inputs.testResults);
+            inputs.templateData = JSON.stringify(parsed);
+            core.info(`✅ Parsed ${parsed.testSuites.length} test suite(s): ${parsed.summary}`);
+        }
         // Build and validate request configuration
         const config = (0, validation_1.buildRequestConfig)(inputs);
         // ============================================================

@@ -2,7 +2,7 @@ import * as core from '@actions/core';
 import { getActionInputs, validateInputs, buildRequestConfig } from './validation';
 import { buildHeaders, makeHttpRequest } from './api';
 import { processResponse } from './output';
-import { parseResultFile } from './parsers/index';
+import { parseResultFiles } from './parsers/index';
 
 /**
  * Main action entry point
@@ -18,11 +18,11 @@ async function run(): Promise<void> {
     core.info('✅ Input validation passed');
 
     // ============================================================
-    // PHASE 1.5: PARSE TEST RESULTS FILE (if result-location set)
+    // PHASE 1.5: PARSE TEST RESULTS FILES (if test-results set)
     // ============================================================
-    if (inputs.resultLocation && inputs.resultLocation.trim().length > 0) {
-      core.info(`📂 Parsing test results from: ${inputs.resultLocation}`);
-      const parsed = await parseResultFile(inputs.resultLocation);
+    if (inputs.testResults && inputs.testResults.length > 0) {
+      core.info(`📂 Parsing test results from: ${inputs.testResults.join(', ')}`);
+      const parsed = await parseResultFiles(inputs.testResults);
       inputs.templateData = JSON.stringify(parsed);
       core.info(`✅ Parsed ${parsed.testSuites.length} test suite(s): ${parsed.summary}`);
     }

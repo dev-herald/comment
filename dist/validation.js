@@ -79,6 +79,7 @@ const rawInputsSchema = zod_1.z.object({
     comment: zod_1.z.string(),
     template: zod_1.z.string(),
     templateData: zod_1.z.string(),
+    testResults: zod_1.z.array(zod_1.z.string()),
     stickyId: zod_1.z.string(),
     apiUrl: zod_1.z
         .url({ error: 'API URL must be a valid HTTPS URL' })
@@ -200,6 +201,7 @@ function getActionInputs() {
         comment: core.getInput('comment', { required: false }),
         template: core.getInput('template', { required: false }),
         templateData: core.getInput('template-data', { required: false }),
+        testResults: core.getMultilineInput('test-results', { required: false }),
         stickyId: core.getInput('sticky-id', { required: false }),
         apiUrl: core.getInput('api-url', { required: false }) || 'https://dev-herald.com/api/v1/github'
     };
@@ -254,12 +256,18 @@ function buildRequestConfig(inputs) {
             throw error;
         }
         // Parse and validate template data
-        if (!inputs.templateData || inputs.templateData.trim().length === 0) {
-            throw new Error('❌ template-data is required when using template mode\n\n' +
+        const hasTemplateData = inputs.templateData && inputs.templateData.trim().length > 0;
+        const hasTestResults = inputs.testResults && inputs.testResults.length > 0;
+        if (!hasTemplateData && !hasTestResults) {
+            throw new Error('❌ template-data (or test-results) is required when using template mode\n\n' +
                 `💡 The ${inputs.template} template requires JSON data. Example:\n` +
                 '  with:\n' +
                 `    template: "${inputs.template}"\n` +
-                '    template-data: \'{"key": "value"}\'');
+                '    template-data: \'{"key": "value"}\'\n\n' +
+                '💡 Or, for TEST_RESULTS, point directly at your test output file:\n' +
+                '  with:\n' +
+                '    template: "TEST_RESULTS"\n' +
+                '    test-results: playwright-report/results.json');
         }
         let parsedData;
         try {

@@ -59,7 +59,7 @@ const rawInputsSchema = z.object({
   comment: z.string(),
   template: z.string(),
   templateData: z.string(),
-  resultLocation: z.string(),
+  testResults: z.array(z.string()),
   stickyId: z.string(),
   apiUrl: z
     .url({ error: 'API URL must be a valid HTTPS URL' })
@@ -188,7 +188,7 @@ export function getActionInputs(): ActionInputs {
     comment: core.getInput('comment', { required: false }),
     template: core.getInput('template', { required: false }),
     templateData: core.getInput('template-data', { required: false }),
-    resultLocation: core.getInput('result-location', { required: false }),
+    testResults: core.getMultilineInput('test-results', { required: false }),
     stickyId: core.getInput('sticky-id', { required: false }),
     apiUrl: core.getInput('api-url', { required: false }) || 'https://dev-herald.com/api/v1/github'
   };
@@ -252,11 +252,11 @@ export function buildRequestConfig(inputs: ActionInputs): RequestConfig {
 
     // Parse and validate template data
     const hasTemplateData = inputs.templateData && inputs.templateData.trim().length > 0;
-    const hasResultLocation = inputs.resultLocation && inputs.resultLocation.trim().length > 0;
+    const hasTestResults = inputs.testResults && inputs.testResults.length > 0;
 
-    if (!hasTemplateData && !hasResultLocation) {
+    if (!hasTemplateData && !hasTestResults) {
       throw new Error(
-        '❌ template-data (or result-location) is required when using template mode\n\n' +
+        '❌ template-data (or test-results) is required when using template mode\n\n' +
         `💡 The ${inputs.template} template requires JSON data. Example:\n` +
         '  with:\n' +
         `    template: "${inputs.template}"\n` +
@@ -264,7 +264,7 @@ export function buildRequestConfig(inputs: ActionInputs): RequestConfig {
         '💡 Or, for TEST_RESULTS, point directly at your test output file:\n' +
         '  with:\n' +
         '    template: "TEST_RESULTS"\n' +
-        '    result-location: playwright-report/results.json'
+        '    test-results: playwright-report/results.json'
       );
     }
 

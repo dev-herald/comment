@@ -23,6 +23,7 @@ function makeDeploymentInputs(overrides = {}) {
             deploymentStatus: 'success',
             deploymentLink: 'https://vercel.com/deployments/abc123',
         }),
+        testResults: [],
         stickyId: '',
         apiUrl: BASE_URL,
         ...overrides,
@@ -96,9 +97,9 @@ function makeDeploymentInputs(overrides = {}) {
 // Deployment template – error paths
 // ---------------------------------------------------------------------------
 (0, vitest_1.describe)('buildRequestConfig – deployment template errors', () => {
-    (0, vitest_1.it)('throws when templateData is empty', () => {
+    (0, vitest_1.it)('throws when templateData is empty and no test-results is set', () => {
         const inputs = makeDeploymentInputs({ templateData: '' });
-        (0, vitest_1.expect)(() => (0, validation_1.buildRequestConfig)(inputs)).toThrow('template-data is required');
+        (0, vitest_1.expect)(() => (0, validation_1.buildRequestConfig)(inputs)).toThrow('template-data (or test-results) is required');
     });
     (0, vitest_1.it)('throws when templateData is not valid JSON', () => {
         const inputs = makeDeploymentInputs({ templateData: '{ not valid json' });
@@ -245,6 +246,7 @@ function makeDeploymentInputs(overrides = {}) {
             comment: '',
             template: '',
             templateData: '',
+            testResults: [],
             stickyId: '',
             apiUrl: BASE_URL,
             ...overrides,
