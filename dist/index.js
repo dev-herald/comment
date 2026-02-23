@@ -25933,6 +25933,7 @@ const core = __importStar(__nccwpck_require__(6966));
 const validation_1 = __nccwpck_require__(8659);
 const api_1 = __nccwpck_require__(7822);
 const output_1 = __nccwpck_require__(1957);
+const index_1 = __nccwpck_require__(1961);
 /**
  * Main action entry point
  */
@@ -25945,6 +25946,15 @@ async function run() {
         const inputs = (0, validation_1.getActionInputs)();
         (0, validation_1.validateInputs)(inputs);
         core.info('✅ Input validation passed');
+        // ============================================================
+        // PHASE 1.5: PARSE TEST RESULTS FILES (if test-results set)
+        // ============================================================
+        if (inputs.testResults && inputs.testResults.length > 0) {
+            core.info(`📂 Parsing test results from: ${inputs.testResults.join(', ')}`);
+            const parsed = await (0, index_1.parseResultFiles)(inputs.testResults);
+            inputs.templateData = JSON.stringify(parsed);
+            core.info(`✅ Parsed ${parsed.testSuites.length} test suite(s): ${parsed.summary}`);
+        }
         // Build and validate request configuration
         const config = (0, validation_1.buildRequestConfig)(inputs);
         // ============================================================
@@ -26155,6 +26165,322 @@ function processResponse(response, mode) {
 
 /***/ }),
 
+/***/ 1961:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseResultFile = parseResultFile;
+exports.parseResultFiles = parseResultFiles;
+const promises_1 = __nccwpck_require__(1943);
+const fs_1 = __nccwpck_require__(9896);
+const playwright_1 = __nccwpck_require__(686);
+const vitest_1 = __nccwpck_require__(5804);
+/**
+ * Reads a single test result file from disk, auto-detects its format, and
+ * returns a normalized ParsedTestResults object.
+ *
+ * Supported formats:
+ *  - Playwright JSON reporter (`--reporter=json`)
+ *  - Vitest JSON reporter (`--reporter=json`)
+ */
+async function parseResultFile(filePath) {
+    if (!(0, fs_1.existsSync)(filePath)) {
+        throw new Error(`❌ Result file not found: "${filePath}"\n\n` +
+            '💡 Make sure your test step runs before this action and the file path is correct.\n' +
+            '   Example: test-results: playwright-report/results.json');
+    }
+    let raw;
+    try {
+        const contents = await (0, promises_1.readFile)(filePath, 'utf-8');
+        raw = JSON.parse(contents);
+    }
+    catch (error) {
+        throw new Error(`❌ Failed to read or parse result file "${filePath}": ${error instanceof Error ? error.message : String(error)}\n\n` +
+            '💡 Ensure the file is valid JSON produced by your test runner.');
+    }
+    if ((0, playwright_1.isPlaywrightReport)(raw)) {
+        return (0, playwright_1.parsePlaywrightReport)(raw);
+    }
+    if ((0, vitest_1.isVitestReport)(raw)) {
+        return (0, vitest_1.parseVitestReport)(raw);
+    }
+    throw new Error(`❌ Unrecognized test result format in "${filePath}".\n\n` +
+        '💡 Currently supported formats:\n' +
+        '   - Playwright JSON reporter (set reporter: json in playwright.config.ts)\n' +
+        '   - Vitest JSON reporter (set reporters: [\'json\'] in vitest.config.ts)\n\n' +
+        '   Example playwright.config.ts:\n' +
+        '     reporter: [["json", { outputFile: "playwright-report/results.json" }]]\n\n' +
+        '   Example vitest.config.ts:\n' +
+        '     reporters: [\'json\'],\n' +
+        '     outputFile: \'vitest-results/results.json\'');
+}
+/**
+ * Parses one or more test result files and merges them into a single
+ * ParsedTestResults object. Each file is auto-detected by format.
+ *
+ * @param filePaths - One or more paths to result JSON files.
+ */
+async function parseResultFiles(filePaths) {
+    const results = await Promise.all(filePaths.map(parseResultFile));
+    if (results.length === 1) {
+        return results[0];
+    }
+    return mergeResults(results);
+}
+function mergeResults(results) {
+    const allSuites = results.flatMap((r) => r.testSuites);
+    const totalPassed = allSuites.reduce((sum, s) => sum + s.passed, 0);
+    const totalFailed = allSuites.reduce((sum, s) => sum + s.failed, 0);
+    const totalSkipped = allSuites.reduce((sum, s) => sum + (s.skipped ?? 0), 0);
+    const parts = [];
+    if (totalFailed > 0)
+        parts.push(`${totalFailed} failed`);
+    if (totalPassed > 0)
+        parts.push(`${totalPassed} passed`);
+    if (totalSkipped > 0)
+        parts.push(`${totalSkipped} skipped`);
+    const suiteWord = allSuites.length === 1 ? 'suite' : 'suites';
+    const summary = parts.length > 0
+        ? `${parts.join(', ')} across ${allSuites.length} ${suiteWord}`
+        : 'No tests ran';
+    return {
+        summary,
+        testSuites: allSuites,
+        showTimestamp: true,
+    };
+}
+
+
+/***/ }),
+
+/***/ 686:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isPlaywrightReport = isPlaywrightReport;
+exports.parsePlaywrightReport = parsePlaywrightReport;
+/**
+ * Recursively walks a suite tree and accumulates counts.
+ */
+function accumulateSuite(suite, counts) {
+    for (const spec of suite.specs) {
+        for (const test of spec.tests) {
+            switch (test.status) {
+                case 'expected':
+                    counts.passed++;
+                    break;
+                case 'unexpected':
+                    counts.failed++;
+                    break;
+                case 'flaky':
+                    // Flaky tests ultimately passed after retries but are worth highlighting.
+                    // Count as passed for the summary; callers can extend this if needed.
+                    counts.passed++;
+                    break;
+                case 'skipped':
+                    counts.skipped++;
+                    break;
+            }
+            // Take the last result's duration (the one that actually counts after retries)
+            const lastResult = test.results[test.results.length - 1];
+            if (lastResult) {
+                counts.durationMs += lastResult.duration;
+            }
+        }
+    }
+    for (const child of suite.suites ?? []) {
+        accumulateSuite(child, counts);
+    }
+}
+/**
+ * Formats a duration in ms to a human-readable string (e.g. "1.2s", "45ms").
+ */
+function formatDuration(ms) {
+    if (ms >= 1000) {
+        return `${(ms / 1000).toFixed(1)}s`;
+    }
+    return `${Math.round(ms)}ms`;
+}
+/**
+ * Builds a plain-English summary line from overall totals.
+ */
+function buildSummary(totalPassed, totalFailed, totalSkipped, suiteCount) {
+    const parts = [];
+    if (totalFailed > 0) {
+        parts.push(`${totalFailed} failed`);
+    }
+    if (totalPassed > 0) {
+        parts.push(`${totalPassed} passed`);
+    }
+    if (totalSkipped > 0) {
+        parts.push(`${totalSkipped} skipped`);
+    }
+    if (parts.length === 0) {
+        return 'No tests ran';
+    }
+    const suiteWord = suiteCount === 1 ? 'suite' : 'suites';
+    return `${parts.join(', ')} across ${suiteCount} ${suiteWord}`;
+}
+// ============================================================================
+// Public API
+// ============================================================================
+/**
+ * Checks whether a plain object looks like Playwright JSON reporter output.
+ */
+function isPlaywrightReport(raw) {
+    if (typeof raw !== 'object' || raw === null)
+        return false;
+    return Array.isArray(raw.suites);
+}
+/**
+ * Parses Playwright JSON reporter output into the canonical ParsedTestResults shape.
+ *
+ * @param raw - Parsed JSON object from a Playwright `--reporter=json` output file.
+ */
+function parsePlaywrightReport(raw) {
+    const testSuites = [];
+    let totalPassed = 0;
+    let totalFailed = 0;
+    let totalSkipped = 0;
+    for (const topSuite of raw.suites) {
+        const counts = { passed: 0, failed: 0, skipped: 0, durationMs: 0 };
+        accumulateSuite(topSuite, counts);
+        totalPassed += counts.passed;
+        totalFailed += counts.failed;
+        totalSkipped += counts.skipped;
+        const suite = {
+            name: topSuite.title || topSuite.file || 'Unknown Suite',
+            passed: counts.passed,
+            failed: counts.failed,
+        };
+        if (counts.skipped > 0) {
+            suite.skipped = counts.skipped;
+        }
+        if (counts.durationMs > 0) {
+            suite.duration = formatDuration(counts.durationMs);
+        }
+        testSuites.push(suite);
+    }
+    const summary = buildSummary(totalPassed, totalFailed, totalSkipped, testSuites.length);
+    return {
+        summary,
+        testSuites,
+        showTimestamp: true,
+    };
+}
+
+
+/***/ }),
+
+/***/ 5804:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isVitestReport = isVitestReport;
+exports.parseVitestReport = parseVitestReport;
+const path_1 = __importDefault(__nccwpck_require__(6928));
+// ============================================================================
+// Helpers
+// ============================================================================
+function formatDuration(ms) {
+    if (ms >= 1000) {
+        return `${(ms / 1000).toFixed(1)}s`;
+    }
+    return `${Math.round(ms)}ms`;
+}
+function buildSummary(totalPassed, totalFailed, totalSkipped, suiteCount) {
+    const parts = [];
+    if (totalFailed > 0)
+        parts.push(`${totalFailed} failed`);
+    if (totalPassed > 0)
+        parts.push(`${totalPassed} passed`);
+    if (totalSkipped > 0)
+        parts.push(`${totalSkipped} skipped`);
+    if (parts.length === 0)
+        return 'No tests ran';
+    const suiteWord = suiteCount === 1 ? 'suite' : 'suites';
+    return `${parts.join(', ')} across ${suiteCount} ${suiteWord}`;
+}
+// ============================================================================
+// Public API
+// ============================================================================
+/**
+ * Checks whether a plain object looks like Vitest (or Jest) JSON reporter output.
+ * Identified by the presence of a `testResults` array and a numeric `numTotalTests`.
+ */
+function isVitestReport(raw) {
+    if (typeof raw !== 'object' || raw === null)
+        return false;
+    const r = raw;
+    return Array.isArray(r.testResults) && typeof r.numTotalTests === 'number';
+}
+/**
+ * Parses Vitest (or Jest) JSON reporter output into the canonical ParsedTestResults shape.
+ *
+ * @param raw - Parsed JSON object from a `--reporter=json` output file.
+ */
+function parseVitestReport(raw) {
+    const testSuites = [];
+    let totalPassed = 0;
+    let totalFailed = 0;
+    let totalSkipped = 0;
+    for (const fileResult of raw.testResults) {
+        let passed = 0;
+        let failed = 0;
+        let skipped = 0;
+        for (const assertion of fileResult.assertionResults) {
+            switch (assertion.status) {
+                case 'passed':
+                    passed++;
+                    break;
+                case 'failed':
+                    failed++;
+                    break;
+                case 'skipped':
+                case 'pending':
+                case 'todo':
+                    skipped++;
+                    break;
+            }
+        }
+        totalPassed += passed;
+        totalFailed += failed;
+        totalSkipped += skipped;
+        const durationMs = fileResult.endTime - fileResult.startTime;
+        const filePath = fileResult.name ?? fileResult.testFilePath ?? 'Unknown Suite';
+        const suite = {
+            name: path_1.default.basename(filePath),
+            passed,
+            failed,
+        };
+        if (skipped > 0) {
+            suite.skipped = skipped;
+        }
+        if (durationMs > 0) {
+            suite.duration = formatDuration(durationMs);
+        }
+        testSuites.push(suite);
+    }
+    const summary = buildSummary(totalPassed, totalFailed, totalSkipped, testSuites.length);
+    return {
+        summary,
+        testSuites,
+        showTimestamp: true,
+    };
+}
+
+
+/***/ }),
+
 /***/ 8659:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -26240,6 +26566,7 @@ const rawInputsSchema = zod_1.z.object({
     comment: zod_1.z.string(),
     template: zod_1.z.string(),
     templateData: zod_1.z.string(),
+    testResults: zod_1.z.array(zod_1.z.string()),
     stickyId: zod_1.z.string(),
     apiUrl: zod_1.z
         .url({ error: 'API URL must be a valid HTTPS URL' })
@@ -26361,6 +26688,7 @@ function getActionInputs() {
         comment: core.getInput('comment', { required: false }),
         template: core.getInput('template', { required: false }),
         templateData: core.getInput('template-data', { required: false }),
+        testResults: core.getMultilineInput('test-results', { required: false }),
         stickyId: core.getInput('sticky-id', { required: false }),
         apiUrl: core.getInput('api-url', { required: false }) || 'https://dev-herald.com/api/v1/github'
     };
@@ -26415,12 +26743,18 @@ function buildRequestConfig(inputs) {
             throw error;
         }
         // Parse and validate template data
-        if (!inputs.templateData || inputs.templateData.trim().length === 0) {
-            throw new Error('❌ template-data is required when using template mode\n\n' +
+        const hasTemplateData = inputs.templateData && inputs.templateData.trim().length > 0;
+        const hasTestResults = inputs.testResults && inputs.testResults.length > 0;
+        if (!hasTemplateData && !hasTestResults) {
+            throw new Error('❌ template-data (or test-results) is required when using template mode\n\n' +
                 `💡 The ${inputs.template} template requires JSON data. Example:\n` +
                 '  with:\n' +
                 `    template: "${inputs.template}"\n` +
-                '    template-data: \'{"key": "value"}\'');
+                '    template-data: \'{"key": "value"}\'\n\n' +
+                '💡 Or, for TEST_RESULTS, point directly at your test output file:\n' +
+                '  with:\n' +
+                '    template: "TEST_RESULTS"\n' +
+                '    test-results: playwright-report/results.json');
         }
         let parsedData;
         try {
@@ -26576,6 +26910,14 @@ module.exports = require("events");
 
 "use strict";
 module.exports = require("fs");
+
+/***/ }),
+
+/***/ 1943:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("fs/promises");
 
 /***/ }),
 
