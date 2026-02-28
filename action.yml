@@ -33,6 +33,21 @@ inputs:
           - name: E2E Tests
             path: playwright-results/results.json
     required: false
+  signal:
+    description: 'Signal type to run. Currently supported: DEPENDENCY_DIFF. When set, the action computes the signal output and posts it automatically — no template-data required.'
+    required: false
+  include:
+    description: 'Comma-separated list of dependency fields to scan for DEPENDENCY_DIFF. Default: dependencies,devDependencies,optionalDependencies'
+    required: false
+    default: 'dependencies,devDependencies,optionalDependencies'
+  enable-cve:
+    description: 'Set to "true" to query the OSV database for CVE counts per dependency version (DEPENDENCY_DIFF only). Default: false'
+    required: false
+    default: 'false'
+  max-deps:
+    description: 'Maximum number of dependency changes to show in the DEPENDENCY_DIFF table. Default: 25'
+    required: false
+    default: '25'
   sticky-id:
     description: 'Optional identifier for updateable comments. Comments with the same sticky-id will update instead of creating new ones. Example: "deployment-status"'
     required: false

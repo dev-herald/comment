@@ -63,7 +63,11 @@ const rawInputsSchema = z.object({
   stickyId: z.string(),
   apiUrl: z
     .url({ error: 'API URL must be a valid HTTPS URL' })
-    .startsWith('https://', { error: 'API URL must use HTTPS for security' })
+    .startsWith('https://', { error: 'API URL must use HTTPS for security' }),
+  signal: z.string(),
+  include: z.string(),
+  enableCve: z.string(),
+  maxDeps: z.string(),
 });
 
 // ============================================================================
@@ -190,7 +194,11 @@ export function getActionInputs(): ActionInputs {
     templateData: core.getInput('template-data', { required: false }),
     testResults: core.getInput('test-results', { required: false }),
     stickyId: core.getInput('sticky-id', { required: false }),
-    apiUrl: core.getInput('api-url', { required: false }) || 'https://dev-herald.com/api/v1/github'
+    apiUrl: core.getInput('api-url', { required: false }) || 'https://dev-herald.com/api/v1/github',
+    signal: core.getInput('signal', { required: false }),
+    include: core.getInput('include', { required: false }),
+    enableCve: core.getInput('enable-cve', { required: false }),
+    maxDeps: core.getInput('max-deps', { required: false }),
   };
 }
 
@@ -206,6 +214,24 @@ export function validateInputs(inputs: ActionInputs): void {
     }
     throw error;
   }
+
+  const hasSignal = inputs.signal.trim().length > 0;
+  const signalOnlyInputs: Array<[string, string]> = [
+    ['include', inputs.include],
+    ['enable-cve', inputs.enableCve],
+    ['max-deps', inputs.maxDeps],
+  ];
+
+  const illegalInputs = signalOnlyInputs
+    .filter(([, value]) => value.trim().length > 0)
+    .map(([name]) => name);
+
+  if (!hasSignal && illegalInputs.length > 0) {
+    throw new Error(
+      `❌ The following input(s) are only valid when "signal" is set: ${illegalInputs.map((n) => `"${n}"`).join(', ')}\n\n` +
+      `💡 Either add "signal: DEPENDENCY_DIFF" to your workflow, or remove these inputs.`
+    );
+  }
 }
 
 /**
@@ -215,7 +241,7 @@ export function buildRequestConfig(inputs: ActionInputs): RequestConfig {
   const hasComment = inputs.comment.trim().length > 0;
   const hasTemplate = inputs.template.trim().length > 0;
 
-  // Validate mode selection
+  // Validate mode selection (signals pre-populate comment/template before this runs)
   if (!hasComment && !hasTemplate) {
     throw new Error(
       '❌ Must provide either "comment" (for simple comments) or "template" (for template comments)\n\n' +

@@ -59,6 +59,10 @@ export interface ActionInputs {
   testResults: string;
   stickyId: string;
   apiUrl: string;
+  signal: string;
+  include: string;
+  enableCve: string;
+  maxDeps: string;
 }
 
 export interface RequestConfig {

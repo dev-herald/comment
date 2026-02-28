@@ -30,6 +30,10 @@ function makeDeploymentInputs(overrides: Partial<ActionInputs> = {}): ActionInpu
     testResults: '',
     stickyId: '',
     apiUrl: BASE_URL,
+    signal: '',
+    include: '',
+    enableCve: '',
+    maxDeps: '',
     ...overrides,
   };
 }
@@ -293,6 +297,10 @@ describe('validateInputs', () => {
       testResults: '',
       stickyId: '',
       apiUrl: BASE_URL,
+      signal: '',
+      include: '',
+      enableCve: '',
+      maxDeps: '',
       ...overrides,
     };
   }
@@ -311,5 +319,35 @@ describe('validateInputs', () => {
 
   it('does not throw for valid inputs', () => {
     expect(() => validateInputs(makeRawInputs())).not.toThrow();
+  });
+
+  it('throws when "include" is set without "signal"', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({ include: 'dependencies' }))
+    ).toThrow(/"include".*signal|signal.*"include"/i);
+  });
+
+  it('throws when "enable-cve" is set without "signal"', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({ enableCve: 'true' }))
+    ).toThrow(/"enable-cve".*signal|signal.*"enable-cve"/i);
+  });
+
+  it('throws when "max-deps" is set without "signal"', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({ maxDeps: '10' }))
+    ).toThrow(/"max-deps".*signal|signal.*"max-deps"/i);
+  });
+
+  it('throws listing all signal-only inputs when multiple are set without signal', () => {
+    const err = () => validateInputs(makeRawInputs({ include: 'dependencies', maxDeps: '10' }));
+    expect(err).toThrow(/"include"/);
+    expect(err).toThrow(/"max-deps"/);
+  });
+
+  it('does not throw when signal-only inputs are set alongside signal', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({ signal: 'DEPENDENCY_DIFF', include: 'dependencies', enableCve: 'true', maxDeps: '10' }))
+    ).not.toThrow();
   });
 });

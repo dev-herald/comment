@@ -3,6 +3,7 @@ import { getActionInputs, validateInputs, buildRequestConfig } from './validatio
 import { buildHeaders, makeHttpRequest } from './api';
 import { processResponse } from './output';
 import { parseTestResultsInput, parseNamedResultEntries } from './parsers/index';
+import { runDependencyDiffSignal } from './signals/dependency-diff';
 
 /**
  * Main action entry point
@@ -27,6 +28,28 @@ async function run(): Promise<void> {
       const parsed = await parseNamedResultEntries(entries);
       inputs.templateData = JSON.stringify(parsed);
       core.info(`✅ Parsed ${parsed.testSuites.length} test suite(s): ${parsed.summary}`);
+    }
+
+    // ============================================================
+    // PHASE 1.7: RUN SIGNAL (if signal is set)
+    // ============================================================
+    if (inputs.signal && inputs.signal.trim().length > 0) {
+      core.info(`📊 Running signal: ${inputs.signal}`);
+
+      if (inputs.signal === 'DEPENDENCY_DIFF') {
+        const result = await runDependencyDiffSignal(inputs);
+        if (result.hasChanges) {
+          inputs.template = 'CUSTOM_TABLE';
+          inputs.templateData = JSON.stringify(result.data);
+        } else {
+          inputs.comment = result.noChangesComment!;
+        }
+      } else {
+        throw new Error(
+          `❌ Unknown signal: "${inputs.signal}"\n\n` +
+          `💡 Available signals: DEPENDENCY_DIFF`
+        );
+      }
     }
 
     // Build and validate request configuration
