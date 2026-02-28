@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deploymentStatusSchema = void 0;
+exports.activeTemplateTypeSchema = exports.signalTypeSchema = exports.deploymentStatusSchema = void 0;
 exports.formatZodError = formatZodError;
 exports.getActionInputs = getActionInputs;
 exports.validateInputs = validateInputs;
@@ -50,6 +50,18 @@ const constants_1 = require("@dev-herald/constants");
  * compile time if this ever drifts out of sync with the constants package.
  */
 exports.deploymentStatusSchema = zod_1.z.enum(['building', 'queued', 'success', 'failed']);
+/**
+ * Valid signal types.
+ * Validated eagerly in validateInputs() so unknown signals fail with a Zod
+ * "Allowed values" error before reaching the signal handler in main.ts.
+ */
+exports.signalTypeSchema = zod_1.z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS']);
+/**
+ * Active (non-deprecated) template types, derived from the constants package.
+ * TEST_RESULTS is excluded — use signal: TEST_RESULTS instead.
+ * Any new template added to templateTypeSchema in constants is automatically included here.
+ */
+exports.activeTemplateTypeSchema = constants_1.templateTypeSchema.exclude(['TEST_RESULTS']);
 /**
  * Deployment schema with:
  *  - deploymentStatus constrained to the known enum values
@@ -83,7 +95,11 @@ const rawInputsSchema = zod_1.z.object({
     stickyId: zod_1.z.string(),
     apiUrl: zod_1.z
         .url({ error: 'API URL must be a valid HTTPS URL' })
-        .startsWith('https://', { error: 'API URL must use HTTPS for security' })
+        .startsWith('https://', { error: 'API URL must use HTTPS for security' }),
+    signal: zod_1.z.string(),
+    include: zod_1.z.string(),
+    enableCve: zod_1.z.string(),
+    maxDeps: zod_1.z.string(),
 });
 // ============================================================================
 // Utility Functions
@@ -171,8 +187,6 @@ function validateTemplateData(template, data) {
         switch (template) {
             case 'DEPLOYMENT':
                 return deploymentSchema.parse(sanitised);
-            case 'TEST_RESULTS':
-                return constants_1.testResultsTemplateSchema.parse(sanitised);
             case 'MIGRATION':
                 return constants_1.migrationTemplateSchema.parse(sanitised);
             case 'CUSTOM_TABLE':
@@ -203,7 +217,11 @@ function getActionInputs() {
         templateData: core.getInput('template-data', { required: false }),
         testResults: core.getInput('test-results', { required: false }),
         stickyId: core.getInput('sticky-id', { required: false }),
-        apiUrl: core.getInput('api-url', { required: false }) || 'https://dev-herald.com/api/v1/github'
+        apiUrl: core.getInput('api-url', { required: false }) || 'https://dev-herald.com/api/v1/github',
+        signal: core.getInput('signal', { required: false }),
+        include: core.getInput('include', { required: false }),
+        enableCve: core.getInput('enable-cve', { required: false }),
+        maxDeps: core.getInput('max-deps', { required: false }),
     };
 }
 /**
@@ -219,6 +237,37 @@ function validateInputs(inputs) {
         }
         throw error;
     }
+    const hasTemplate = inputs.template.trim().length > 0;
+    const hasSignal = inputs.signal.trim().length > 0;
+    if (hasTemplate && hasSignal) {
+        throw new Error('❌ Cannot provide both "template" and "signal" — choose one mode\n\n' +
+            '💡 Either use:\n' +
+            '  - "template" + "template-data" for structured templates\n' +
+            '  - "signal" for automatic signal-based comments (e.g. DEPENDENCY_DIFF, TEST_RESULTS)');
+    }
+    if (hasSignal) {
+        try {
+            exports.signalTypeSchema.parse(inputs.signal.trim());
+        }
+        catch (error) {
+            if (error instanceof zod_1.z.ZodError) {
+                throw new Error(formatZodError(error));
+            }
+            throw error;
+        }
+    }
+    const signalOnlyInputs = [
+        ['include', inputs.include],
+        ['enable-cve', inputs.enableCve],
+        ['max-deps', inputs.maxDeps],
+    ];
+    const illegalInputs = signalOnlyInputs
+        .filter(([, value]) => value.trim().length > 0)
+        .map(([name]) => name);
+    if (!hasSignal && illegalInputs.length > 0) {
+        throw new Error(`❌ The following input(s) are only valid when "signal" is set: ${illegalInputs.map((n) => `"${n}"`).join(', ')}\n\n` +
+            `💡 Either add "signal: DEPENDENCY_DIFF" to your workflow, or remove these inputs.`);
+    }
 }
 /**
  * Builds the request configuration based on inputs with Zod validation
@@ -226,7 +275,7 @@ function validateInputs(inputs) {
 function buildRequestConfig(inputs) {
     const hasComment = inputs.comment.trim().length > 0;
     const hasTemplate = inputs.template.trim().length > 0;
-    // Validate mode selection
+    // Validate mode selection (signals pre-populate comment/template before this runs)
     if (!hasComment && !hasTemplate) {
         throw new Error('❌ Must provide either "comment" (for simple comments) or "template" (for template comments)\n\n' +
             '💡 Example with comment:\n' +
@@ -244,10 +293,25 @@ function buildRequestConfig(inputs) {
             '  - "template" + "template-data" for structured templates');
     }
     if (hasTemplate) {
+        // Catch the deprecated TEST_RESULTS template before the enum parse so the
+        // migration hint takes priority over the generic "Allowed values" Zod error.
+        if (inputs.template === 'TEST_RESULTS') {
+            throw new Error('❌ The TEST_RESULTS template is deprecated. Please switch to the TEST_RESULTS signal instead:\n\n' +
+                '💡 Replace:\n' +
+                '    template: "TEST_RESULTS"\n' +
+                '    test-results: |\n' +
+                '      - name: Unit Tests\n' +
+                '        path: vitest-results/results.json\n\n' +
+                '  With:\n' +
+                '    signal: "TEST_RESULTS"\n' +
+                '    test-results: |\n' +
+                '      - name: Unit Tests\n' +
+                '        path: vitest-results/results.json');
+        }
         // Template mode - validate template type
         let validatedTemplate;
         try {
-            validatedTemplate = constants_1.templateTypeSchema.parse(inputs.template);
+            validatedTemplate = exports.activeTemplateTypeSchema.parse(inputs.template);
         }
         catch (error) {
             if (error instanceof zod_1.z.ZodError) {
@@ -259,15 +323,11 @@ function buildRequestConfig(inputs) {
         const hasTemplateData = inputs.templateData && inputs.templateData.trim().length > 0;
         const hasTestResults = inputs.testResults && inputs.testResults.trim().length > 0;
         if (!hasTemplateData && !hasTestResults) {
-            throw new Error('❌ template-data (or test-results) is required when using template mode\n\n' +
+            throw new Error('❌ template-data is required when using template mode\n\n' +
                 `💡 The ${inputs.template} template requires JSON data. Example:\n` +
                 '  with:\n' +
                 `    template: "${inputs.template}"\n` +
-                '    template-data: \'{"key": "value"}\'\n\n' +
-                '💡 Or, for TEST_RESULTS, point directly at your test output file:\n' +
-                '  with:\n' +
-                '    template: "TEST_RESULTS"\n' +
-                '    test-results: playwright-report/results.json');
+                '    template-data: \'{"key": "value"}\'');
         }
         let parsedData;
         try {

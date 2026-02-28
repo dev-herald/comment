@@ -26,6 +26,10 @@ function makeDeploymentInputs(overrides = {}) {
         testResults: '',
         stickyId: '',
         apiUrl: BASE_URL,
+        signal: '',
+        include: '',
+        enableCve: '',
+        maxDeps: '',
         ...overrides,
     };
 }
@@ -99,7 +103,7 @@ function makeDeploymentInputs(overrides = {}) {
 (0, vitest_1.describe)('buildRequestConfig – deployment template errors', () => {
     (0, vitest_1.it)('throws when templateData is empty and no test-results is set', () => {
         const inputs = makeDeploymentInputs({ templateData: '' });
-        (0, vitest_1.expect)(() => (0, validation_1.buildRequestConfig)(inputs)).toThrow('template-data (or test-results) is required');
+        (0, vitest_1.expect)(() => (0, validation_1.buildRequestConfig)(inputs)).toThrow('template-data is required');
     });
     (0, vitest_1.it)('throws when templateData is not valid JSON', () => {
         const inputs = makeDeploymentInputs({ templateData: '{ not valid json' });
@@ -249,6 +253,10 @@ function makeDeploymentInputs(overrides = {}) {
             testResults: '',
             stickyId: '',
             apiUrl: BASE_URL,
+            signal: '',
+            include: '',
+            enableCve: '',
+            maxDeps: '',
             ...overrides,
         };
     }
@@ -260,5 +268,50 @@ function makeDeploymentInputs(overrides = {}) {
     });
     (0, vitest_1.it)('does not throw for valid inputs', () => {
         (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs())).not.toThrow();
+    });
+    (0, vitest_1.it)('throws when "include" is set without "signal"', () => {
+        (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({ include: 'dependencies' }))).toThrow(/"include".*signal|signal.*"include"/i);
+    });
+    (0, vitest_1.it)('throws when "enable-cve" is set without "signal"', () => {
+        (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({ enableCve: 'true' }))).toThrow(/"enable-cve".*signal|signal.*"enable-cve"/i);
+    });
+    (0, vitest_1.it)('throws when "max-deps" is set without "signal"', () => {
+        (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({ maxDeps: '10' }))).toThrow(/"max-deps".*signal|signal.*"max-deps"/i);
+    });
+    (0, vitest_1.it)('throws listing all signal-only inputs when multiple are set without signal', () => {
+        const err = () => (0, validation_1.validateInputs)(makeRawInputs({ include: 'dependencies', maxDeps: '10' }));
+        (0, vitest_1.expect)(err).toThrow(/"include"/);
+        (0, vitest_1.expect)(err).toThrow(/"max-deps"/);
+    });
+    (0, vitest_1.it)('does not throw when signal-only inputs are set alongside signal', () => {
+        (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({ signal: 'DEPENDENCY_DIFF', include: 'dependencies', enableCve: 'true', maxDeps: '10' }))).not.toThrow();
+    });
+    (0, vitest_1.it)('throws when both "template" and "signal" are provided', () => {
+        (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({ template: 'DEPLOYMENT', signal: 'DEPENDENCY_DIFF' }))).toThrow(/Cannot provide both "template" and "signal"/);
+    });
+    (0, vitest_1.it)('does not throw when only "template" is provided (no signal)', () => {
+        (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({ template: 'DEPLOYMENT' }))).not.toThrow();
+    });
+    (0, vitest_1.it)('does not throw when only "signal" is provided (no template)', () => {
+        (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({ signal: 'TEST_RESULTS' }))).not.toThrow();
+    });
+});
+// ---------------------------------------------------------------------------
+// TEST_RESULTS template deprecation
+// ---------------------------------------------------------------------------
+(0, vitest_1.describe)('buildRequestConfig – TEST_RESULTS template deprecation', () => {
+    (0, vitest_1.it)('throws a deprecation error when template: TEST_RESULTS is used', () => {
+        const inputs = makeDeploymentInputs({
+            template: 'TEST_RESULTS',
+            templateData: JSON.stringify({ testSuites: [] }),
+        });
+        (0, vitest_1.expect)(() => (0, validation_1.buildRequestConfig)(inputs)).toThrow(/TEST_RESULTS template is deprecated/);
+    });
+    (0, vitest_1.it)('deprecation error message includes migration hint to signal: TEST_RESULTS', () => {
+        const inputs = makeDeploymentInputs({
+            template: 'TEST_RESULTS',
+            templateData: JSON.stringify({ testSuites: [] }),
+        });
+        (0, vitest_1.expect)(() => (0, validation_1.buildRequestConfig)(inputs)).toThrow(/signal.*TEST_RESULTS/);
     });
 });

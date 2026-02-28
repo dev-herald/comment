@@ -38,6 +38,8 @@ const validation_1 = require("./validation");
 const api_1 = require("./api");
 const output_1 = require("./output");
 const index_1 = require("./parsers/index");
+const dependency_diff_1 = require("./signals/dependency-diff");
+const test_results_1 = require("./signals/test-results");
 /**
  * Main action entry point
  */
@@ -60,6 +62,46 @@ async function run() {
             const parsed = await (0, index_1.parseNamedResultEntries)(entries);
             inputs.templateData = JSON.stringify(parsed);
             core.info(`✅ Parsed ${parsed.testSuites.length} test suite(s): ${parsed.summary}`);
+        }
+        // ============================================================
+        // PHASE 1.7: RUN SIGNAL (if signal is set)
+        // ============================================================
+        if (inputs.signal && inputs.signal.trim().length > 0) {
+            core.info(`📊 Running signal: ${inputs.signal}`);
+            if (inputs.signal === 'DEPENDENCY_DIFF') {
+                const result = await (0, dependency_diff_1.runDependencyDiffSignal)(inputs);
+                if (result.hasChanges) {
+                    inputs.template = 'CUSTOM_TABLE';
+                    inputs.templateData = JSON.stringify(result.data);
+                }
+                else {
+                    inputs.comment = result.noChangesComment;
+                }
+            }
+            else if (inputs.signal === 'TEST_RESULTS') {
+                if (!inputs.testResults || inputs.testResults.trim().length === 0) {
+                    throw new Error('❌ The TEST_RESULTS signal requires "test-results" to be set\n\n' +
+                        '💡 Example:\n' +
+                        '  with:\n' +
+                        '    signal: "TEST_RESULTS"\n' +
+                        '    test-results: |\n' +
+                        '      - name: Unit Tests\n' +
+                        '        path: vitest-results/results.json');
+                }
+                const parsedResults = JSON.parse(inputs.templateData);
+                const result = (0, test_results_1.runTestResultsSignal)(parsedResults);
+                if (result.hasResults) {
+                    inputs.template = 'CUSTOM_TABLE';
+                    inputs.templateData = JSON.stringify(result.data);
+                }
+                else {
+                    inputs.comment = result.noResultsComment ?? '';
+                }
+            }
+            else {
+                // Unreachable: validateInputs() rejects unknown signals via signalTypeSchema
+                throw new Error(`❌ Unhandled signal: "${inputs.signal}"`);
+            }
         }
         // Build and validate request configuration
         const config = (0, validation_1.buildRequestConfig)(inputs);
