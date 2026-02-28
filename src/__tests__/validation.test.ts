@@ -127,7 +127,7 @@ describe('buildRequestConfig – deployment template happy paths', () => {
 describe('buildRequestConfig – deployment template errors', () => {
   it('throws when templateData is empty and no test-results is set', () => {
     const inputs = makeDeploymentInputs({ templateData: '' });
-    expect(() => buildRequestConfig(inputs)).toThrow('template-data (or test-results) is required');
+    expect(() => buildRequestConfig(inputs)).toThrow('template-data is required');
   });
 
   it('throws when templateData is not valid JSON', () => {
@@ -349,5 +349,45 @@ describe('validateInputs', () => {
     expect(() =>
       validateInputs(makeRawInputs({ signal: 'DEPENDENCY_DIFF', include: 'dependencies', enableCve: 'true', maxDeps: '10' }))
     ).not.toThrow();
+  });
+
+  it('throws when both "template" and "signal" are provided', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({ template: 'DEPLOYMENT', signal: 'DEPENDENCY_DIFF' }))
+    ).toThrow(/Cannot provide both "template" and "signal"/);
+  });
+
+  it('does not throw when only "template" is provided (no signal)', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({ template: 'DEPLOYMENT' }))
+    ).not.toThrow();
+  });
+
+  it('does not throw when only "signal" is provided (no template)', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({ signal: 'TEST_RESULTS' }))
+    ).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TEST_RESULTS template deprecation
+// ---------------------------------------------------------------------------
+
+describe('buildRequestConfig – TEST_RESULTS template deprecation', () => {
+  it('throws a deprecation error when template: TEST_RESULTS is used', () => {
+    const inputs = makeDeploymentInputs({
+      template: 'TEST_RESULTS',
+      templateData: JSON.stringify({ testSuites: [] }),
+    });
+    expect(() => buildRequestConfig(inputs)).toThrow(/TEST_RESULTS template is deprecated/);
+  });
+
+  it('deprecation error message includes migration hint to signal: TEST_RESULTS', () => {
+    const inputs = makeDeploymentInputs({
+      template: 'TEST_RESULTS',
+      templateData: JSON.stringify({ testSuites: [] }),
+    });
+    expect(() => buildRequestConfig(inputs)).toThrow(/signal.*TEST_RESULTS/);
   });
 });

@@ -6,7 +6,6 @@ import {
   simpleCommentSchema,
   templateTypeSchema,
   deploymentTemplateSchema,
-  testResultsTemplateSchema,
   migrationTemplateSchema,
   customTableTemplateSchema,
   DEPLOYMENT_STATUS_IMGS
@@ -26,6 +25,22 @@ export const deploymentStatusSchema = z.enum(
   ['building', 'queued', 'success', 'failed'] satisfies Array<keyof typeof DEPLOYMENT_STATUS_IMGS>
 );
 export type DeploymentStatus = z.infer<typeof deploymentStatusSchema>;
+
+/**
+ * Valid signal types.
+ * Validated eagerly in validateInputs() so unknown signals fail with a Zod
+ * "Allowed values" error before reaching the signal handler in main.ts.
+ */
+export const signalTypeSchema = z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS']);
+export type SignalType = z.infer<typeof signalTypeSchema>;
+
+/**
+ * Active (non-deprecated) template types, derived from the constants package.
+ * TEST_RESULTS is excluded — use signal: TEST_RESULTS instead.
+ * Any new template added to templateTypeSchema in constants is automatically included here.
+ */
+export const activeTemplateTypeSchema = templateTypeSchema.exclude(['TEST_RESULTS']);
+export type ActiveTemplateType = z.infer<typeof activeTemplateTypeSchema>;
 
 /**
  * Deployment schema with:
@@ -161,8 +176,6 @@ function validateTemplateData(template: string, data: any): any {
     switch (template) {
       case 'DEPLOYMENT':
         return deploymentSchema.parse(sanitised);
-      case 'TEST_RESULTS':
-        return testResultsTemplateSchema.parse(sanitised);
       case 'MIGRATION':
         return migrationTemplateSchema.parse(sanitised);
       case 'CUSTOM_TABLE':
@@ -215,7 +228,29 @@ export function validateInputs(inputs: ActionInputs): void {
     throw error;
   }
 
+  const hasTemplate = inputs.template.trim().length > 0;
   const hasSignal = inputs.signal.trim().length > 0;
+
+  if (hasTemplate && hasSignal) {
+    throw new Error(
+      '❌ Cannot provide both "template" and "signal" — choose one mode\n\n' +
+      '💡 Either use:\n' +
+      '  - "template" + "template-data" for structured templates\n' +
+      '  - "signal" for automatic signal-based comments (e.g. DEPENDENCY_DIFF, TEST_RESULTS)'
+    );
+  }
+
+  if (hasSignal) {
+    try {
+      signalTypeSchema.parse(inputs.signal.trim());
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        throw new Error(formatZodError(error));
+      }
+      throw error;
+    }
+  }
+
   const signalOnlyInputs: Array<[string, string]> = [
     ['include', inputs.include],
     ['enable-cve', inputs.enableCve],
@@ -265,10 +300,28 @@ export function buildRequestConfig(inputs: ActionInputs): RequestConfig {
   }
 
   if (hasTemplate) {
+    // Catch the deprecated TEST_RESULTS template before the enum parse so the
+    // migration hint takes priority over the generic "Allowed values" Zod error.
+    if (inputs.template === 'TEST_RESULTS') {
+      throw new Error(
+        '❌ The TEST_RESULTS template is deprecated. Please switch to the TEST_RESULTS signal instead:\n\n' +
+        '💡 Replace:\n' +
+        '    template: "TEST_RESULTS"\n' +
+        '    test-results: |\n' +
+        '      - name: Unit Tests\n' +
+        '        path: vitest-results/results.json\n\n' +
+        '  With:\n' +
+        '    signal: "TEST_RESULTS"\n' +
+        '    test-results: |\n' +
+        '      - name: Unit Tests\n' +
+        '        path: vitest-results/results.json'
+      );
+    }
+
     // Template mode - validate template type
-    let validatedTemplate: z.infer<typeof templateTypeSchema>;
+    let validatedTemplate: ActiveTemplateType;
     try {
-      validatedTemplate = templateTypeSchema.parse(inputs.template);
+      validatedTemplate = activeTemplateTypeSchema.parse(inputs.template);
     } catch (error) {
       if (error instanceof z.ZodError) {
         throw new Error(formatZodError(error));
@@ -282,15 +335,11 @@ export function buildRequestConfig(inputs: ActionInputs): RequestConfig {
 
     if (!hasTemplateData && !hasTestResults) {
       throw new Error(
-        '❌ template-data (or test-results) is required when using template mode\n\n' +
+        '❌ template-data is required when using template mode\n\n' +
         `💡 The ${inputs.template} template requires JSON data. Example:\n` +
         '  with:\n' +
         `    template: "${inputs.template}"\n` +
-        '    template-data: \'{"key": "value"}\'\n\n' +
-        '💡 Or, for TEST_RESULTS, point directly at your test output file:\n' +
-        '  with:\n' +
-        '    template: "TEST_RESULTS"\n' +
-        '    test-results: playwright-report/results.json'
+        '    template-data: \'{"key": "value"}\''
       );
     }
 

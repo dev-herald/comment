@@ -4,6 +4,7 @@ import { buildHeaders, makeHttpRequest } from './api';
 import { processResponse } from './output';
 import { parseTestResultsInput, parseNamedResultEntries } from './parsers/index';
 import { runDependencyDiffSignal } from './signals/dependency-diff';
+import { runTestResultsSignal } from './signals/test-results';
 
 /**
  * Main action entry point
@@ -44,11 +45,29 @@ async function run(): Promise<void> {
         } else {
           inputs.comment = result.noChangesComment!;
         }
+      } else if (inputs.signal === 'TEST_RESULTS') {
+        if (!inputs.testResults || inputs.testResults.trim().length === 0) {
+          throw new Error(
+            '❌ The TEST_RESULTS signal requires "test-results" to be set\n\n' +
+            '💡 Example:\n' +
+            '  with:\n' +
+            '    signal: "TEST_RESULTS"\n' +
+            '    test-results: |\n' +
+            '      - name: Unit Tests\n' +
+            '        path: vitest-results/results.json'
+          );
+        }
+        const parsedResults = JSON.parse(inputs.templateData);
+        const result = runTestResultsSignal(parsedResults);
+        if (result.hasResults) {
+          inputs.template = 'CUSTOM_TABLE';
+          inputs.templateData = JSON.stringify(result.data);
+        } else {
+          inputs.comment = result.noResultsComment ?? '';
+        }
       } else {
-        throw new Error(
-          `❌ Unknown signal: "${inputs.signal}"\n\n` +
-          `💡 Available signals: DEPENDENCY_DIFF`
-        );
+        // Unreachable: validateInputs() rejects unknown signals via signalTypeSchema
+        throw new Error(`❌ Unhandled signal: "${inputs.signal}"`);
       }
     }
 
