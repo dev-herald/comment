@@ -34,7 +34,7 @@ inputs:
             path: playwright-results/results.json
     required: false
   signal:
-    description: 'Signal type to run. Supported: DEPENDENCY_DIFF, TEST_RESULTS. When set, the action computes the signal output and posts it automatically — no template or template-data required. Cannot be used together with "template".'
+    description: 'Signal type to run. Supported: DEPENDENCY_DIFF, TEST_RESULTS, NEW_DEPENDENCY. When set, the action computes the signal output and posts it automatically — no template or template-data required. Cannot be used together with "template".'
     required: false
   include:
     description: 'Comma-separated list of dependency fields to scan for DEPENDENCY_DIFF. Default: dependencies,devDependencies,optionalDependencies'

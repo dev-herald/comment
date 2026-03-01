@@ -31,7 +31,7 @@ export type DeploymentStatus = z.infer<typeof deploymentStatusSchema>;
  * Validated eagerly in validateInputs() so unknown signals fail with a Zod
  * "Allowed values" error before reaching the signal handler in main.ts.
  */
-export const signalTypeSchema = z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS']);
+export const signalTypeSchema = z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS', 'NEW_DEPENDENCY']);
 export type SignalType = z.infer<typeof signalTypeSchema>;
 
 /**

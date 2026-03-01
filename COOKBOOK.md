@@ -50,6 +50,20 @@
     max-deps: '50'
 ```
 
+## New Dependency Signal
+
+```yaml
+- name: Post new dependency report
+  uses: dev-herald/comment@v1
+  with:
+    api-key: ${{ secrets.DEV_HERALD_API_KEY }}
+    pr-number: ${{ github.event.pull_request.number }}
+    signal: 'NEW_DEPENDENCY'
+    enable-cve: 'true'
+    max-deps: '25'
+    sticky-id: 'new-deps'
+```
+
 ## Test Results Signal
 
 ```yaml

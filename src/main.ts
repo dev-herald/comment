@@ -5,6 +5,7 @@ import { processResponse } from './output';
 import { parseTestResultsInput, parseNamedResultEntries } from './parsers/index';
 import { runDependencyDiffSignal } from './signals/dependency-diff';
 import { runTestResultsSignal } from './signals/test-results';
+import { runNewDependencySignal } from './signals/new-dependency';
 
 /**
  * Main action entry point
@@ -64,6 +65,14 @@ async function run(): Promise<void> {
           inputs.templateData = JSON.stringify(result.data);
         } else {
           inputs.comment = result.noResultsComment ?? '';
+        }
+      } else if (inputs.signal === 'NEW_DEPENDENCY') {
+        const result = await runNewDependencySignal(inputs);
+        if (result.hasChanges) {
+          inputs.template = 'CUSTOM_TABLE';
+          inputs.templateData = JSON.stringify(result.data);
+        } else {
+          inputs.comment = result.noChangesComment!;
         }
       } else {
         // Unreachable: validateInputs() rejects unknown signals via signalTypeSchema
