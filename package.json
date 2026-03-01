@@ -1,6 +1,6 @@
 {
   "name": "api-call-action",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "GitHub Action to call an API endpoint with API key authentication",
   "main": "dist/index.js",
   "scripts": {
