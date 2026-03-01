@@ -55,7 +55,7 @@ exports.deploymentStatusSchema = zod_1.z.enum(['building', 'queued', 'success', 
  * Validated eagerly in validateInputs() so unknown signals fail with a Zod
  * "Allowed values" error before reaching the signal handler in main.ts.
  */
-exports.signalTypeSchema = zod_1.z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS']);
+exports.signalTypeSchema = zod_1.z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS', 'NEW_DEPENDENCY']);
 /**
  * Active (non-deprecated) template types, derived from the constants package.
  * TEST_RESULTS is excluded — use signal: TEST_RESULTS instead.
