@@ -30216,6 +30216,7 @@ const index_1 = __nccwpck_require__(1961);
 const dependency_diff_1 = __nccwpck_require__(7079);
 const test_results_1 = __nccwpck_require__(3069);
 const new_dependency_1 = __nccwpck_require__(4118);
+const bundle_analysis_1 = __nccwpck_require__(1282);
 /**
  * Main action entry point
  */
@@ -30276,6 +30277,20 @@ async function run() {
             }
             else if (inputs.signal === 'NEW_DEPENDENCY') {
                 const result = await (0, new_dependency_1.runNewDependencySignal)(inputs);
+                if (result.hasChanges) {
+                    inputs.template = 'CUSTOM_TABLE';
+                    inputs.templateData = JSON.stringify(result.data);
+                }
+                else {
+                    inputs.comment = result.noChangesComment;
+                }
+            }
+            else if (inputs.signal === 'BUNDLE_ANALYSIS') {
+                const result = await (0, bundle_analysis_1.runBundleAnalysisSignal)(inputs);
+                if (result.skip) {
+                    core.info('Skipping PR comment (baseline not found)');
+                    return;
+                }
                 if (result.hasChanges) {
                     inputs.template = 'CUSTOM_TABLE';
                     inputs.templateData = JSON.stringify(result.data);
@@ -30921,6 +30936,392 @@ function parseVitestReport(raw) {
         summary,
         testSuites,
         showTimestamp: true,
+    };
+}
+
+
+/***/ }),
+
+/***/ 9802:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseSizeToBytes = parseSizeToBytes;
+exports.parseNextBundleReport = parseNextBundleReport;
+const fs = __importStar(__nccwpck_require__(9896));
+const path = __importStar(__nccwpck_require__(6928));
+/**
+ * Parses a size string (e.g. "7.16 KB", "2.56 KB") to bytes.
+ */
+function parseSizeToBytes(sizeStr) {
+    if (!sizeStr || typeof sizeStr !== 'string')
+        return 0;
+    const trimmed = sizeStr.trim();
+    if (!trimmed)
+        return 0;
+    const match = trimmed.match(/^([\d.]+)\s*([KMGT]?B?)$/i);
+    if (!match)
+        return 0;
+    const value = parseFloat(match[1]);
+    const unit = (match[2] || 'b').toUpperCase();
+    const multipliers = {
+        B: 1,
+        KB: 1024,
+        MB: 1024 * 1024,
+        GB: 1024 * 1024 * 1024,
+    };
+    const mult = multipliers[unit] ?? multipliers[unit.replace('B', '')] ?? 1;
+    return Math.round(value * mult);
+}
+/**
+ * Converts a raw chunk to normalized BundleChunk.
+ */
+function toBundleChunk(raw, source) {
+    const chunk = {
+        label: raw.label,
+        parsedSize: parseSizeToBytes(raw.parsedSize ?? raw.statSize),
+        source,
+    };
+    const gzip = parseSizeToBytes(raw.gzipSize);
+    if (gzip > 0)
+        chunk.gzipSize = gzip;
+    if (raw.chunkNames?.length)
+        chunk.chunkNames = raw.chunkNames;
+    return chunk;
+}
+/**
+ * Derives source (client/edge/nodejs) from filename.
+ * Next.js @next/bundle-analyzer outputs: client.json, edge.json, nodejs.json
+ */
+function getSourceFromFilename(filename) {
+    const base = path.basename(filename, path.extname(filename));
+    const lower = base.toLowerCase();
+    if (lower === 'client' || lower === 'edge' || lower === 'nodejs')
+        return lower;
+    return undefined;
+}
+/**
+ * Parses Next.js bundle analyzer JSON from a directory.
+ * Expects files like client.json, edge.json, nodejs.json (or any *.json).
+ * Merges all chunks with source field from filename.
+ */
+function parseNextBundleReport(dirPath) {
+    const resolved = path.resolve(dirPath);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+        throw new Error(`Bundle report directory not found: ${dirPath}`);
+    }
+    const files = fs.readdirSync(resolved).filter((f) => f.endsWith('.json'));
+    const chunks = [];
+    for (const file of files) {
+        const filePath = path.join(resolved, file);
+        const content = fs.readFileSync(filePath, 'utf8');
+        const source = getSourceFromFilename(file);
+        let data;
+        try {
+            data = JSON.parse(content);
+        }
+        catch {
+            continue; // skip invalid JSON
+        }
+        const arr = Array.isArray(data) ? data : [data];
+        for (const raw of arr) {
+            if (raw?.label) {
+                chunks.push(toBundleChunk(raw, source));
+            }
+        }
+    }
+    return {
+        version: 1,
+        ecosystem: 'next',
+        createdAt: new Date().toISOString(),
+        chunks,
+        meta: { fileCount: files.length },
+    };
+}
+
+
+/***/ }),
+
+/***/ 4291:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.formatBytes = formatBytes;
+exports.formatDelta = formatDelta;
+exports.computeDiff = computeDiff;
+/**
+ * Formats bytes to human-readable string (e.g. 4096 -> "4 KB").
+ */
+function formatBytes(bytes) {
+    if (bytes === 0)
+        return '0 B';
+    const abs = Math.abs(bytes);
+    const sign = bytes < 0 ? '-' : '';
+    if (abs >= 1024 * 1024)
+        return `${sign}${(abs / (1024 * 1024)).toFixed(1)} MB`;
+    if (abs >= 1024)
+        return `${sign}${(abs / 1024).toFixed(1)} KB`;
+    return `${sign}${abs} B`;
+}
+/**
+ * Formats delta with + prefix for positive.
+ */
+function formatDelta(bytes) {
+    if (bytes > 0)
+        return `+${formatBytes(bytes)}`;
+    return formatBytes(bytes);
+}
+/**
+ * Builds a chunk key for comparison. Same label + source = same chunk.
+ */
+function chunkKey(c) {
+    return c.source ? `${c.source}:${c.label}` : c.label;
+}
+/**
+ * Computes diff between baseline and current bundle reports.
+ */
+function computeDiff(baseline, current, options) {
+    const baselineMap = new Map();
+    for (const c of baseline.chunks) {
+        baselineMap.set(chunkKey(c), c);
+    }
+    const currentMap = new Map();
+    for (const c of current.chunks) {
+        currentMap.set(chunkKey(c), c);
+    }
+    const rows = [];
+    let netDeltaBytes = 0;
+    // Added: in current, not in baseline
+    for (const [key, curr] of currentMap) {
+        if (!baselineMap.has(key)) {
+            rows.push({
+                label: curr.label,
+                changeType: 'added',
+                deltaBytes: curr.parsedSize,
+                newSizeBytes: curr.parsedSize,
+                source: curr.source,
+            });
+            netDeltaBytes += curr.parsedSize;
+        }
+    }
+    // Removed: in baseline, not in current
+    for (const [key, base] of baselineMap) {
+        if (!currentMap.has(key)) {
+            rows.push({
+                label: base.label,
+                changeType: 'removed',
+                deltaBytes: -base.parsedSize,
+                newSizeBytes: 0,
+                oldSizeBytes: base.parsedSize,
+                source: base.source,
+            });
+            netDeltaBytes -= base.parsedSize;
+        }
+    }
+    // Changed: same chunk, different size
+    for (const [key, curr] of currentMap) {
+        const base = baselineMap.get(key);
+        if (base && base.parsedSize !== curr.parsedSize) {
+            const delta = curr.parsedSize - base.parsedSize;
+            rows.push({
+                label: curr.label,
+                changeType: 'changed',
+                deltaBytes: delta,
+                newSizeBytes: curr.parsedSize,
+                oldSizeBytes: base.parsedSize,
+                source: curr.source,
+            });
+            netDeltaBytes += delta;
+        }
+    }
+    // Sort: added first, then changed (by abs delta desc), then removed
+    rows.sort((a, b) => {
+        const order = { added: 0, changed: 1, removed: 2 };
+        const o = order[a.changeType] - order[b.changeType];
+        if (o !== 0)
+            return o;
+        return Math.abs(b.deltaBytes) - Math.abs(a.deltaBytes);
+    });
+    const limited = rows.slice(0, options.maxChanges);
+    if (limited.length === 0) {
+        return {
+            hasChanges: false,
+            rows: [],
+            netDeltaBytes: 0,
+            noChangesComment: `## \uD83D\uDCE6 Bundle size\n\n` +
+                `No bundle size changes detected vs baseline.\n\n` +
+                `<sub>Updated ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC</sub>`,
+        };
+    }
+    const prefix = (r) => {
+        if (r.changeType === 'added')
+            return `+ ${r.label}`;
+        if (r.changeType === 'removed')
+            return `- ${r.label}`;
+        return r.label;
+    };
+    const data = {
+        title: `\uD83D\uDCE6 Bundle size (${limited.length} change${limited.length === 1 ? '' : 's'}) · Net: ${formatDelta(netDeltaBytes)}`,
+        headers: ['Chunk', 'Delta', 'New Size'],
+        rows: limited.map((r) => ({
+            cells: [
+                { text: prefix(r) },
+                { text: formatDelta(r.deltaBytes) },
+                { text: r.changeType === 'removed' ? '\u2014' : formatBytes(r.newSizeBytes) },
+            ],
+        })),
+        showTimestamp: true,
+    };
+    return {
+        hasChanges: true,
+        rows: limited,
+        netDeltaBytes,
+        data,
+    };
+}
+
+
+/***/ }),
+
+/***/ 1282:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.runBundleAnalysisSignal = runBundleAnalysisSignal;
+const core = __importStar(__nccwpck_require__(6966));
+const fs = __importStar(__nccwpck_require__(9896));
+const path = __importStar(__nccwpck_require__(6928));
+const next_1 = __nccwpck_require__(9802);
+const diff_1 = __nccwpck_require__(4291);
+/**
+ * Checks if a directory exists and contains at least one JSON file.
+ */
+function hasBundleReport(dirPath) {
+    try {
+        const resolved = path.resolve(dirPath);
+        if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory())
+            return false;
+        const files = fs.readdirSync(resolved).filter((f) => f.endsWith('.json'));
+        return files.length > 0;
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * Runs the BUNDLE_ANALYSIS signal: loads baseline + current reports, diffs, returns CUSTOM_TABLE data.
+ */
+async function runBundleAnalysisSignal(inputs) {
+    const reportPath = (inputs.bundleReportPath ?? '').trim();
+    const baselinePath = (inputs.bundleBaselinePath ?? '').trim();
+    const baselineBranch = (inputs.bundleBaselineBranch ?? 'main').trim() || 'main';
+    const maxChanges = Math.max(1, parseInt(inputs.maxChanges ?? '25', 10) || 25);
+    const showGzip = (inputs.showGzip ?? 'false').toLowerCase() === 'true';
+    if (!reportPath || !baselinePath) {
+        throw new Error('❌ BUNDLE_ANALYSIS requires "bundle-report-path" and "bundle-baseline-path"\n\n' +
+            '💡 Example:\n' +
+            '  with:\n' +
+            '    signal: "BUNDLE_ANALYSIS"\n' +
+            '    bundle-report-path: ".next/analyze/"\n' +
+            '    bundle-baseline-path: "baseline/"');
+    }
+    if (!hasBundleReport(baselinePath)) {
+        core.info(`No baseline found on ${baselineBranch}. Once the analysis on ${baselineBranch} has run you'll see something.`);
+        return { hasChanges: false, skip: true };
+    }
+    if (!hasBundleReport(reportPath)) {
+        throw new Error(`❌ No bundle report found at "${reportPath}". Ensure ANALYZE=true build ran and produced JSON files.`);
+    }
+    core.info('📂 Loading bundle reports...');
+    const baseline = (0, next_1.parseNextBundleReport)(baselinePath);
+    const current = (0, next_1.parseNextBundleReport)(reportPath);
+    core.info(`📋 Baseline: ${baseline.chunks.length} chunks, Current: ${current.chunks.length} chunks`);
+    const result = (0, diff_1.computeDiff)(baseline, current, {
+        maxChanges,
+        showGzip,
+    });
+    if (result.hasChanges) {
+        core.info(`📊 Found ${result.rows.length} bundle change(s)`);
+        return {
+            hasChanges: true,
+            data: result.data,
+        };
+    }
+    return {
+        hasChanges: false,
+        noChangesComment: result.noChangesComment,
     };
 }
 
@@ -31696,7 +32097,7 @@ exports.deploymentStatusSchema = zod_1.z.enum(['building', 'queued', 'success', 
  * Validated eagerly in validateInputs() so unknown signals fail with a Zod
  * "Allowed values" error before reaching the signal handler in main.ts.
  */
-exports.signalTypeSchema = zod_1.z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS', 'NEW_DEPENDENCY']);
+exports.signalTypeSchema = zod_1.z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS', 'NEW_DEPENDENCY', 'BUNDLE_ANALYSIS']);
 /**
  * Active (non-deprecated) template types, derived from the constants package.
  * TEST_RESULTS is excluded — use signal: TEST_RESULTS instead.
@@ -31741,6 +32142,11 @@ const rawInputsSchema = zod_1.z.object({
     include: zod_1.z.string(),
     enableCve: zod_1.z.string(),
     maxDeps: zod_1.z.string(),
+    bundleReportPath: zod_1.z.string(),
+    bundleBaselinePath: zod_1.z.string(),
+    bundleBaselineBranch: zod_1.z.string(),
+    maxChanges: zod_1.z.string(),
+    showGzip: zod_1.z.string(),
 });
 // ============================================================================
 // Utility Functions
@@ -31863,6 +32269,11 @@ function getActionInputs() {
         include: core.getInput('include', { required: false }),
         enableCve: core.getInput('enable-cve', { required: false }),
         maxDeps: core.getInput('max-deps', { required: false }),
+        bundleReportPath: core.getInput('bundle-report-path', { required: false }) ?? '',
+        bundleBaselinePath: core.getInput('bundle-baseline-path', { required: false }) ?? '',
+        bundleBaselineBranch: core.getInput('bundle-baseline-branch', { required: false }) ?? 'main',
+        maxChanges: core.getInput('max-changes', { required: false }) ?? '25',
+        showGzip: core.getInput('show-gzip', { required: false }) ?? 'false',
     };
 }
 /**
@@ -31901,13 +32312,31 @@ function validateInputs(inputs) {
         ['include', inputs.include],
         ['enable-cve', inputs.enableCve],
         ['max-deps', inputs.maxDeps],
+        ['bundle-report-path', inputs.bundleReportPath],
+        ['bundle-baseline-path', inputs.bundleBaselinePath],
+        ['bundle-baseline-branch', inputs.bundleBaselineBranch],
+        ['max-changes', inputs.maxChanges],
+        ['show-gzip', inputs.showGzip],
     ];
     const illegalInputs = signalOnlyInputs
         .filter(([, value]) => value.trim().length > 0)
         .map(([name]) => name);
     if (!hasSignal && illegalInputs.length > 0) {
         throw new Error(`❌ The following input(s) are only valid when "signal" is set: ${illegalInputs.map((n) => `"${n}"`).join(', ')}\n\n` +
-            `💡 Either add "signal: DEPENDENCY_DIFF" to your workflow, or remove these inputs.`);
+            `💡 Add a signal (e.g. DEPENDENCY_DIFF, BUNDLE_ANALYSIS) to your workflow, or remove these inputs.`);
+    }
+    const bundleInputs = [
+        ['bundle-report-path', inputs.bundleReportPath],
+        ['bundle-baseline-path', inputs.bundleBaselinePath],
+        ['bundle-baseline-branch', inputs.bundleBaselineBranch],
+        ['max-changes', inputs.maxChanges],
+        ['show-gzip', inputs.showGzip],
+    ];
+    const hasBundleInputs = bundleInputs.some(([, value]) => value.trim().length > 0);
+    if (hasBundleInputs && inputs.signal.trim() !== 'BUNDLE_ANALYSIS') {
+        const provided = bundleInputs.filter(([, value]) => value.trim().length > 0).map(([name]) => name);
+        throw new Error(`❌ The following input(s) require signal: BUNDLE_ANALYSIS: ${provided.map((n) => `"${n}"`).join(', ')}\n\n` +
+            `💡 Add signal: BUNDLE_ANALYSIS to your workflow, or remove these inputs.`);
     }
 }
 /**
