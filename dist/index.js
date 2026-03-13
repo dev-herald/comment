@@ -30215,6 +30215,7 @@ const output_1 = __nccwpck_require__(1957);
 const index_1 = __nccwpck_require__(1961);
 const dependency_diff_1 = __nccwpck_require__(7079);
 const test_results_1 = __nccwpck_require__(3069);
+const new_dependency_1 = __nccwpck_require__(4118);
 /**
  * Main action entry point
  */
@@ -30271,6 +30272,16 @@ async function run() {
                 }
                 else {
                     inputs.comment = result.noResultsComment ?? '';
+                }
+            }
+            else if (inputs.signal === 'NEW_DEPENDENCY') {
+                const result = await (0, new_dependency_1.runNewDependencySignal)(inputs);
+                if (result.hasChanges) {
+                    inputs.template = 'CUSTOM_TABLE';
+                    inputs.templateData = JSON.stringify(result.data);
+                }
+                else {
+                    inputs.comment = result.noChangesComment;
                 }
             }
             else {
@@ -30955,31 +30966,20 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.isLocalDep = isLocalDep;
+exports.isSemver = exports.isLocalDep = void 0;
 exports.isGitDep = isGitDep;
-exports.isSemver = isSemver;
 exports.classifyChange = classifyChange;
 exports.formatVersion = formatVersion;
 exports.formatChangeType = formatChangeType;
 exports.formatCveDelta = formatCveDelta;
 exports.runDependencyDiffSignal = runDependencyDiffSignal;
-const https = __importStar(__nccwpck_require__(5692));
-const fs = __importStar(__nccwpck_require__(9896));
-const child_process_1 = __nccwpck_require__(7698);
 const core = __importStar(__nccwpck_require__(6966));
-const github = __importStar(__nccwpck_require__(4903));
+const utils_1 = __nccwpck_require__(1229);
+Object.defineProperty(exports, "isLocalDep", ({ enumerable: true, get: function () { return utils_1.isLocalDep; } }));
+Object.defineProperty(exports, "isSemver", ({ enumerable: true, get: function () { return utils_1.isSemver; } }));
 // ============================================================================
 // Pure utility functions (exported for testing)
 // ============================================================================
-/**
- * Returns true for versions that reference local paths or workspace protocols.
- * These are always skipped — they carry no meaningful version semantics.
- */
-function isLocalDep(version) {
-    return (version.startsWith('file:') ||
-        version.startsWith('workspace:') ||
-        version.startsWith('link:'));
-}
 /**
  * Returns true for versions that reference a git remote.
  * These are included in the diff but classified as Unknown.
@@ -30992,13 +30992,6 @@ function isGitDep(version) {
         version.startsWith('gitlab:'));
 }
 /**
- * Returns true for plain semver-compatible version strings
- * (with optional leading range chars ~ ^ = < > or bare digits).
- */
-function isSemver(version) {
-    return /^[~^=<>]*\d+\.\d+\.\d+/.test(version);
-}
-/**
  * Classifies a version change as major / minor / patch / unknown.
  * Non-semver versions on either side always produce 'unknown'.
  */
@@ -31006,10 +30999,11 @@ function classifyChange(from, to) {
     const clean = (v) => v.replace(/^[~^=<>]+/, '');
     const fromClean = clean(from);
     const toClean = clean(to);
-    if (!isSemver(fromClean) || !isSemver(toClean))
+    if (!(0, utils_1.isSemver)(fromClean) || !(0, utils_1.isSemver)(toClean))
         return 'unknown';
-    const [fMaj, fMin, fPat] = fromClean.split('.').map(Number);
+    const [fMaj, fMin] = fromClean.split('.').map(Number);
     const [tMaj, tMin, tPat] = toClean.split('.').map(Number);
+    const [, , fPat] = fromClean.split('.').map(Number);
     if (tMaj !== fMaj)
         return 'major';
     if (tMin !== fMin)
@@ -31055,81 +31049,14 @@ function formatCveDelta(delta) {
     return `${delta}`;
 }
 // ============================================================================
-// Git helpers
-// ============================================================================
-function getBaseSha() {
-    const sha = github.context.payload?.pull_request?.base?.sha;
-    if (sha)
-        return sha;
-    // Fallback: use git to find the merge base against the base branch env var
-    const baseBranch = process.env.GITHUB_BASE_REF;
-    if (baseBranch) {
-        try {
-            return (0, child_process_1.execSync)(`git merge-base HEAD origin/${baseBranch}`, { encoding: 'utf8' }).trim();
-        }
-        catch {
-            // ignore, fall through to error
-        }
-    }
-    throw new Error('❌ DEPENDENCY_DIFF: Could not determine base SHA.\n' +
-        '💡 Make sure this action runs on a pull_request event.');
-}
-function readPackageJsonAtSha(sha) {
-    let raw;
-    try {
-        raw = (0, child_process_1.execSync)(`git show ${sha}:package.json`, { encoding: 'utf8' });
-    }
-    catch (err) {
-        throw new Error(`❌ DEPENDENCY_DIFF: Could not read package.json at base SHA ${sha}.\n` +
-            `💡 Ensure fetch-depth: 0 is set in actions/checkout.\n` +
-            `Details: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    return JSON.parse(raw);
-}
-function readHeadPackageJson() {
-    const raw = fs.readFileSync('package.json', 'utf8');
-    return JSON.parse(raw);
-}
-// ============================================================================
 // OSV CVE query
 // ============================================================================
-async function batchOsvQuery(queries) {
-    return new Promise((resolve, reject) => {
-        const body = JSON.stringify({ queries });
-        const options = {
-            hostname: 'api.osv.dev',
-            port: 443,
-            path: '/v1/querybatch',
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(body),
-                'User-Agent': 'Dev-Herald-GitHub-Action/1.0',
-            },
-        };
-        const req = https.request(options, (res) => {
-            let data = '';
-            res.on('data', (chunk) => { data += chunk; });
-            res.on('end', () => {
-                try {
-                    resolve(JSON.parse(data));
-                }
-                catch {
-                    reject(new Error(`OSV response parse error: ${data}`));
-                }
-            });
-        });
-        req.on('error', (err) => reject(new Error(`OSV network error: ${err.message}`)));
-        req.write(body);
-        req.end();
-    });
-}
 /**
  * Queries OSV in a single batch request and fills cveDelta on each change.
  * Only semver versions are queried; non-semver entries keep cveDelta = null.
  */
 async function queryCVEDeltas(changes) {
-    const queryable = changes.filter((c) => isSemver(c.from.replace(/^[~^=<>]+/, '')) && isSemver(c.to.replace(/^[~^=<>]+/, '')));
+    const queryable = changes.filter((c) => (0, utils_1.isSemver)(c.from.replace(/^[~^=<>]+/, '')) && (0, utils_1.isSemver)(c.to.replace(/^[~^=<>]+/, '')));
     if (queryable.length === 0)
         return;
     const queries = queryable.flatMap((c) => [
@@ -31137,7 +31064,7 @@ async function queryCVEDeltas(changes) {
         { package: { name: c.name, ecosystem: 'npm' }, version: c.to.replace(/^[~^=<>]+/, '') },
     ]);
     core.info(`🔍 Querying OSV for ${queryable.length} package(s)...`);
-    const response = await batchOsvQuery(queries);
+    const response = await (0, utils_1.batchOsvQuery)(queries);
     queryable.forEach((change, i) => {
         const fromResult = response.results[i * 2];
         const toResult = response.results[i * 2 + 1];
@@ -31145,18 +31072,6 @@ async function queryCVEDeltas(changes) {
         const toVulns = toResult?.vulns?.length ?? 0;
         change.cveDelta = toVulns - fromVulns;
     });
-}
-// ============================================================================
-// Timestamp
-// ============================================================================
-function formatTimestamp() {
-    const now = new Date();
-    const day = now.getUTCDate();
-    const month = now.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' });
-    const year = now.getUTCFullYear();
-    const hours = String(now.getUTCHours()).padStart(2, '0');
-    const minutes = String(now.getUTCMinutes()).padStart(2, '0');
-    return `${day} ${month} ${year} \u2022 ${hours}:${minutes} UTC`;
 }
 // ============================================================================
 // Main signal entry point
@@ -31174,10 +31089,10 @@ async function runDependencyDiffSignal(inputs) {
         maxDeps: Math.max(1, parseInt(maxDepsRaw, 10) || 25),
     };
     core.info(`📦 Scanning dependency fields: ${options.includedFields.join(', ')}`);
-    const baseSha = getBaseSha();
+    const baseSha = (0, utils_1.getBaseSha)('DEPENDENCY_DIFF');
     core.info(`🔀 Base SHA: ${baseSha}`);
-    const basePkg = readPackageJsonAtSha(baseSha);
-    const headPkg = readHeadPackageJson();
+    const basePkg = (0, utils_1.readPackageJsonAtSha)(baseSha, 'DEPENDENCY_DIFF');
+    const headPkg = (0, utils_1.readHeadPackageJson)();
     const changes = [];
     for (const field of options.includedFields) {
         const baseDeps = basePkg[field] ?? {};
@@ -31190,7 +31105,7 @@ async function runDependencyDiffSignal(inputs) {
             if (baseVersion === headVersion)
                 continue;
             // Skip purely local / workspace references
-            if (isLocalDep(baseVersion) || isLocalDep(headVersion))
+            if ((0, utils_1.isLocalDep)(baseVersion) || (0, utils_1.isLocalDep)(headVersion))
                 continue;
             changes.push({
                 name,
@@ -31217,7 +31132,7 @@ async function runDependencyDiffSignal(inputs) {
             hasChanges: false,
             noChangesComment: `## \uD83D\uDCE6 Dependency changes\n\n` +
                 `No dependency changes detected in the latest commit.\n\n` +
-                `<sub>Updated ${formatTimestamp()}</sub>`,
+                `<sub>Updated ${(0, utils_1.formatTimestamp)()}</sub>`,
         };
     }
     core.info(`📋 Found ${limited.length} dependency change(s)`);
@@ -31230,6 +31145,292 @@ async function runDependencyDiffSignal(inputs) {
                 { text: `${formatVersion(c.from)} \u2192 ${formatVersion(c.to)}` },
                 { text: formatChangeType(c.changeType) },
                 { text: formatCveDelta(c.cveDelta) },
+            ],
+        })),
+        showTimestamp: true,
+    };
+    return { hasChanges: true, data };
+}
+
+
+/***/ }),
+
+/***/ 4118:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.formatCveCount = formatCveCount;
+exports.formatDownloads = formatDownloads;
+exports.formatRelativeTime = formatRelativeTime;
+exports.runNewDependencySignal = runNewDependencySignal;
+const https = __importStar(__nccwpck_require__(5692));
+const core = __importStar(__nccwpck_require__(6966));
+const utils_1 = __nccwpck_require__(1229);
+// ============================================================================
+// OSV CVE query
+// ============================================================================
+/**
+ * Queries OSV in a single batch and sets cveCount on each dep.
+ * One query per package (absolute count for the added version, not a delta).
+ * Only semver versions are queried; non-semver entries keep cveCount = null.
+ */
+async function queryCVECounts(deps) {
+    const queryable = deps.filter((d) => (0, utils_1.isSemver)(d.version.replace(/^[~^=<>]+/, '')));
+    if (queryable.length === 0)
+        return;
+    const queries = queryable.map((d) => ({
+        package: { name: d.name, ecosystem: 'npm' },
+        version: d.version.replace(/^[~^=<>]+/, ''),
+    }));
+    core.info(`🔍 Querying OSV for ${queryable.length} new package(s)...`);
+    const response = await (0, utils_1.batchOsvQuery)(queries);
+    queryable.forEach((dep, i) => {
+        dep.cveCount = response.results[i]?.vulns?.length ?? 0;
+    });
+}
+// ============================================================================
+// npm downloads API
+// ============================================================================
+function fetchNpmDownloads(packageName) {
+    return new Promise((resolve) => {
+        const encoded = encodeURIComponent(packageName);
+        const options = {
+            hostname: 'api.npmjs.org',
+            port: 443,
+            path: `/downloads/point/last-week/${encoded}`,
+            method: 'GET',
+            headers: { 'User-Agent': 'Dev-Herald-GitHub-Action/1.0' },
+        };
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+                try {
+                    const parsed = JSON.parse(data);
+                    resolve(typeof parsed.downloads === 'number' ? parsed.downloads : null);
+                }
+                catch {
+                    resolve(null);
+                }
+            });
+        });
+        req.on('error', () => resolve(null));
+        req.end();
+    });
+}
+async function queryNpmDownloads(deps) {
+    core.info(`📊 Fetching weekly downloads for ${deps.length} package(s)...`);
+    const results = await Promise.all(deps.map((d) => fetchNpmDownloads(d.name)));
+    deps.forEach((dep, i) => { dep.weeklyDownloads = results[i] ?? null; });
+}
+// ============================================================================
+// deps.dev version API
+// ============================================================================
+function fetchDepsDevVersion(packageName, version) {
+    return new Promise((resolve) => {
+        const cleanVersion = version.replace(/^[~^=<>]+/, '');
+        if (!(0, utils_1.isSemver)(cleanVersion)) {
+            resolve(null);
+            return;
+        }
+        const encodedName = encodeURIComponent(packageName);
+        const encodedVersion = encodeURIComponent(cleanVersion);
+        const options = {
+            hostname: 'api.deps.dev',
+            port: 443,
+            path: `/v3/systems/npm/packages/${encodedName}/versions/${encodedVersion}`,
+            method: 'GET',
+            headers: { 'User-Agent': 'Dev-Herald-GitHub-Action/1.0' },
+        };
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+                try {
+                    const parsed = JSON.parse(data);
+                    resolve(parsed.publishedAt ?? null);
+                }
+                catch {
+                    resolve(null);
+                }
+            });
+        });
+        req.on('error', () => resolve(null));
+        req.end();
+    });
+}
+async function queryDepsDevStats(deps) {
+    core.info(`📅 Fetching release dates for ${deps.length} package(s)...`);
+    const results = await Promise.all(deps.map((d) => fetchDepsDevVersion(d.name, d.version)));
+    deps.forEach((dep, i) => { dep.publishedAt = results[i] ?? null; });
+}
+// ============================================================================
+// Formatters
+// ============================================================================
+/**
+ * Formats an absolute CVE count.
+ * null  → '—' (CVE check disabled or non-semver)
+ * 0     → '0'
+ * N > 0 → '+N 🚨'
+ */
+function formatCveCount(count) {
+    if (count === null)
+        return '\u2014';
+    if (count === 0)
+        return '0';
+    return `+${count} \uD83D\uDEA8`;
+}
+/**
+ * Formats a weekly download count into a human-readable string.
+ * null → '—'
+ */
+function formatDownloads(n) {
+    if (n === null)
+        return '\u2014';
+    if (n >= 1000000)
+        return `${(n / 1000000).toFixed(1)}M`;
+    if (n >= 1000)
+        return `${(n / 1000).toFixed(1)}k`;
+    return `${n}`;
+}
+/**
+ * Formats an RFC3339 date string as a relative time string.
+ * null → '—'
+ */
+function formatRelativeTime(dateStr) {
+    if (!dateStr)
+        return '\u2014';
+    const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime()))
+        return '\u2014';
+    const diffMs = Date.now() - date.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays < 1)
+        return 'today';
+    if (diffDays < 7)
+        return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+    const weeks = Math.floor(diffDays / 7);
+    if (diffDays < 30)
+        return `${weeks} week${weeks === 1 ? '' : 's'} ago`;
+    const months = Math.floor(diffDays / 30);
+    if (diffDays < 365)
+        return `${months} month${months === 1 ? '' : 's'} ago`;
+    const years = Math.floor(diffDays / 365);
+    return `${years} year${years === 1 ? '' : 's'} ago`;
+}
+// ============================================================================
+// Main signal entry point
+// ============================================================================
+async function runNewDependencySignal(inputs) {
+    const includeRaw = inputs.include.trim() || 'dependencies,devDependencies,optionalDependencies';
+    const enableCveRaw = inputs.enableCve.trim() || 'false';
+    const maxDepsRaw = inputs.maxDeps.trim() || '25';
+    const options = {
+        includedFields: includeRaw
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean),
+        enableCve: enableCveRaw.toLowerCase() === 'true',
+        maxDeps: Math.max(1, parseInt(maxDepsRaw, 10) || 25),
+    };
+    core.info(`📦 Scanning dependency fields: ${options.includedFields.join(', ')}`);
+    const baseSha = (0, utils_1.getBaseSha)('NEW_DEPENDENCY');
+    core.info(`🔀 Base SHA: ${baseSha}`);
+    const basePkg = (0, utils_1.readPackageJsonAtSha)(baseSha, 'NEW_DEPENDENCY');
+    const headPkg = (0, utils_1.readHeadPackageJson)();
+    const newDeps = [];
+    for (const field of options.includedFields) {
+        const baseDeps = basePkg[field] ?? {};
+        const headDeps = headPkg[field] ?? {};
+        for (const [name, version] of Object.entries(headDeps)) {
+            // Only report packages that did NOT exist in base at all
+            if (baseDeps[name] !== undefined)
+                continue;
+            // Skip purely local / workspace references
+            if ((0, utils_1.isLocalDep)(version))
+                continue;
+            newDeps.push({
+                name,
+                version,
+                cveCount: null,
+                weeklyDownloads: null,
+                publishedAt: null,
+            });
+        }
+    }
+    // Apply limit before any API queries to avoid unnecessary calls
+    const limited = newDeps.slice(0, options.maxDeps);
+    if (limited.length === 0) {
+        return {
+            hasChanges: false,
+            noChangesComment: `## \uD83D\uDCE6 New dependencies added\n\n` +
+                `No new dependencies detected in this PR.\n\n` +
+                `<sub>Updated ${(0, utils_1.formatTimestamp)()}</sub>`,
+        };
+    }
+    core.info(`📋 Found ${limited.length} new dependency(ies)`);
+    // Run all enrichment queries concurrently
+    await Promise.all([
+        options.enableCve
+            ? queryCVECounts(limited).catch((err) => {
+                core.warning(`⚠️ CVE query failed (OSV may be unavailable). CVE column will show '—'.\n` +
+                    `Details: ${err instanceof Error ? err.message : String(err)}`);
+            })
+            : Promise.resolve(),
+        queryNpmDownloads(limited).catch((err) => {
+            core.warning(`⚠️ npm downloads query failed. Weekly DL column will show '—'.\n` +
+                `Details: ${err instanceof Error ? err.message : String(err)}`);
+        }),
+        queryDepsDevStats(limited).catch((err) => {
+            core.warning(`⚠️ deps.dev query failed. Last Release column will show '—'.\n` +
+                `Details: ${err instanceof Error ? err.message : String(err)}`);
+        }),
+    ]);
+    const data = {
+        title: `\uD83D\uDCE6 New dependencies added (${limited.length})`,
+        headers: ['Package', 'Version', 'CVEs', 'Weekly DL', 'Last Release'],
+        rows: limited.map((d) => ({
+            cells: [
+                { text: d.name },
+                { text: d.version },
+                { text: formatCveCount(d.cveCount) },
+                { text: formatDownloads(d.weeklyDownloads) },
+                { text: formatRelativeTime(d.publishedAt) },
             ],
         })),
         showTimestamp: true,
@@ -31275,6 +31476,160 @@ function runTestResultsSignal(parsed) {
         showTimestamp: parsed.showTimestamp,
     };
     return { hasResults: true, data };
+}
+
+
+/***/ }),
+
+/***/ 1229:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isLocalDep = isLocalDep;
+exports.isSemver = isSemver;
+exports.getBaseSha = getBaseSha;
+exports.readPackageJsonAtSha = readPackageJsonAtSha;
+exports.readHeadPackageJson = readHeadPackageJson;
+exports.batchOsvQuery = batchOsvQuery;
+exports.formatTimestamp = formatTimestamp;
+const https = __importStar(__nccwpck_require__(5692));
+const fs = __importStar(__nccwpck_require__(9896));
+const child_process_1 = __nccwpck_require__(7698);
+const github = __importStar(__nccwpck_require__(4903));
+// ============================================================================
+// Version classifiers
+// ============================================================================
+/**
+ * Returns true for versions that reference local paths or workspace protocols.
+ * These are always skipped — they carry no meaningful version semantics.
+ */
+function isLocalDep(version) {
+    return (version.startsWith('file:') ||
+        version.startsWith('workspace:') ||
+        version.startsWith('link:'));
+}
+/**
+ * Returns true for plain semver-compatible version strings
+ * (with optional leading range chars ~ ^ = < > or bare digits).
+ */
+function isSemver(version) {
+    return /^[~^=<>]*\d+\.\d+\.\d+/.test(version);
+}
+// ============================================================================
+// Git helpers
+// ============================================================================
+function getBaseSha(signalName) {
+    const sha = github.context.payload?.pull_request?.base?.sha;
+    if (sha)
+        return sha;
+    const baseBranch = process.env.GITHUB_BASE_REF;
+    if (baseBranch) {
+        try {
+            return (0, child_process_1.execSync)(`git merge-base HEAD origin/${baseBranch}`, { encoding: 'utf8' }).trim();
+        }
+        catch {
+            // ignore, fall through to error
+        }
+    }
+    throw new Error(`❌ ${signalName}: Could not determine base SHA.\n` +
+        '💡 Make sure this action runs on a pull_request event.');
+}
+function readPackageJsonAtSha(sha, signalName) {
+    let raw;
+    try {
+        raw = (0, child_process_1.execSync)(`git show ${sha}:package.json`, { encoding: 'utf8' });
+    }
+    catch (err) {
+        throw new Error(`❌ ${signalName}: Could not read package.json at base SHA ${sha}.\n` +
+            `💡 Ensure fetch-depth: 0 is set in actions/checkout.\n` +
+            `Details: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return JSON.parse(raw);
+}
+function readHeadPackageJson() {
+    const raw = fs.readFileSync('package.json', 'utf8');
+    return JSON.parse(raw);
+}
+// ============================================================================
+// OSV batch query
+// ============================================================================
+async function batchOsvQuery(queries) {
+    return new Promise((resolve, reject) => {
+        const body = JSON.stringify({ queries });
+        const options = {
+            hostname: 'api.osv.dev',
+            port: 443,
+            path: '/v1/querybatch',
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body),
+                'User-Agent': 'Dev-Herald-GitHub-Action/1.0',
+            },
+        };
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+                try {
+                    resolve(JSON.parse(data));
+                }
+                catch {
+                    reject(new Error(`OSV response parse error: ${data}`));
+                }
+            });
+        });
+        req.on('error', (err) => reject(new Error(`OSV network error: ${err.message}`)));
+        req.write(body);
+        req.end();
+    });
+}
+// ============================================================================
+// Timestamp
+// ============================================================================
+function formatTimestamp() {
+    const now = new Date();
+    const day = now.getUTCDate();
+    const month = now.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' });
+    const year = now.getUTCFullYear();
+    const hours = String(now.getUTCHours()).padStart(2, '0');
+    const minutes = String(now.getUTCMinutes()).padStart(2, '0');
+    return `${day} ${month} ${year} \u2022 ${hours}:${minutes} UTC`;
 }
 
 
@@ -31341,7 +31696,7 @@ exports.deploymentStatusSchema = zod_1.z.enum(['building', 'queued', 'success', 
  * Validated eagerly in validateInputs() so unknown signals fail with a Zod
  * "Allowed values" error before reaching the signal handler in main.ts.
  */
-exports.signalTypeSchema = zod_1.z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS']);
+exports.signalTypeSchema = zod_1.z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS', 'NEW_DEPENDENCY']);
 /**
  * Active (non-deprecated) template types, derived from the constants package.
  * TEST_RESULTS is excluded — use signal: TEST_RESULTS instead.

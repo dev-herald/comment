@@ -40,6 +40,7 @@ const output_1 = require("./output");
 const index_1 = require("./parsers/index");
 const dependency_diff_1 = require("./signals/dependency-diff");
 const test_results_1 = require("./signals/test-results");
+const new_dependency_1 = require("./signals/new-dependency");
 /**
  * Main action entry point
  */
@@ -96,6 +97,16 @@ async function run() {
                 }
                 else {
                     inputs.comment = result.noResultsComment ?? '';
+                }
+            }
+            else if (inputs.signal === 'NEW_DEPENDENCY') {
+                const result = await (0, new_dependency_1.runNewDependencySignal)(inputs);
+                if (result.hasChanges) {
+                    inputs.template = 'CUSTOM_TABLE';
+                    inputs.templateData = JSON.stringify(result.data);
+                }
+                else {
+                    inputs.comment = result.noChangesComment;
                 }
             }
             else {

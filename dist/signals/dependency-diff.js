@@ -33,31 +33,20 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.isLocalDep = isLocalDep;
+exports.isSemver = exports.isLocalDep = void 0;
 exports.isGitDep = isGitDep;
-exports.isSemver = isSemver;
 exports.classifyChange = classifyChange;
 exports.formatVersion = formatVersion;
 exports.formatChangeType = formatChangeType;
 exports.formatCveDelta = formatCveDelta;
 exports.runDependencyDiffSignal = runDependencyDiffSignal;
-const https = __importStar(require("https"));
-const fs = __importStar(require("fs"));
-const child_process_1 = require("child_process");
 const core = __importStar(require("@actions/core"));
-const github = __importStar(require("@actions/github"));
+const utils_1 = require("./utils");
+Object.defineProperty(exports, "isLocalDep", { enumerable: true, get: function () { return utils_1.isLocalDep; } });
+Object.defineProperty(exports, "isSemver", { enumerable: true, get: function () { return utils_1.isSemver; } });
 // ============================================================================
 // Pure utility functions (exported for testing)
 // ============================================================================
-/**
- * Returns true for versions that reference local paths or workspace protocols.
- * These are always skipped — they carry no meaningful version semantics.
- */
-function isLocalDep(version) {
-    return (version.startsWith('file:') ||
-        version.startsWith('workspace:') ||
-        version.startsWith('link:'));
-}
 /**
  * Returns true for versions that reference a git remote.
  * These are included in the diff but classified as Unknown.
@@ -70,13 +59,6 @@ function isGitDep(version) {
         version.startsWith('gitlab:'));
 }
 /**
- * Returns true for plain semver-compatible version strings
- * (with optional leading range chars ~ ^ = < > or bare digits).
- */
-function isSemver(version) {
-    return /^[~^=<>]*\d+\.\d+\.\d+/.test(version);
-}
-/**
  * Classifies a version change as major / minor / patch / unknown.
  * Non-semver versions on either side always produce 'unknown'.
  */
@@ -84,10 +66,11 @@ function classifyChange(from, to) {
     const clean = (v) => v.replace(/^[~^=<>]+/, '');
     const fromClean = clean(from);
     const toClean = clean(to);
-    if (!isSemver(fromClean) || !isSemver(toClean))
+    if (!(0, utils_1.isSemver)(fromClean) || !(0, utils_1.isSemver)(toClean))
         return 'unknown';
-    const [fMaj, fMin, fPat] = fromClean.split('.').map(Number);
+    const [fMaj, fMin] = fromClean.split('.').map(Number);
     const [tMaj, tMin, tPat] = toClean.split('.').map(Number);
+    const [, , fPat] = fromClean.split('.').map(Number);
     if (tMaj !== fMaj)
         return 'major';
     if (tMin !== fMin)
@@ -133,81 +116,14 @@ function formatCveDelta(delta) {
     return `${delta}`;
 }
 // ============================================================================
-// Git helpers
-// ============================================================================
-function getBaseSha() {
-    const sha = github.context.payload?.pull_request?.base?.sha;
-    if (sha)
-        return sha;
-    // Fallback: use git to find the merge base against the base branch env var
-    const baseBranch = process.env.GITHUB_BASE_REF;
-    if (baseBranch) {
-        try {
-            return (0, child_process_1.execSync)(`git merge-base HEAD origin/${baseBranch}`, { encoding: 'utf8' }).trim();
-        }
-        catch {
-            // ignore, fall through to error
-        }
-    }
-    throw new Error('❌ DEPENDENCY_DIFF: Could not determine base SHA.\n' +
-        '💡 Make sure this action runs on a pull_request event.');
-}
-function readPackageJsonAtSha(sha) {
-    let raw;
-    try {
-        raw = (0, child_process_1.execSync)(`git show ${sha}:package.json`, { encoding: 'utf8' });
-    }
-    catch (err) {
-        throw new Error(`❌ DEPENDENCY_DIFF: Could not read package.json at base SHA ${sha}.\n` +
-            `💡 Ensure fetch-depth: 0 is set in actions/checkout.\n` +
-            `Details: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    return JSON.parse(raw);
-}
-function readHeadPackageJson() {
-    const raw = fs.readFileSync('package.json', 'utf8');
-    return JSON.parse(raw);
-}
-// ============================================================================
 // OSV CVE query
 // ============================================================================
-async function batchOsvQuery(queries) {
-    return new Promise((resolve, reject) => {
-        const body = JSON.stringify({ queries });
-        const options = {
-            hostname: 'api.osv.dev',
-            port: 443,
-            path: '/v1/querybatch',
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(body),
-                'User-Agent': 'Dev-Herald-GitHub-Action/1.0',
-            },
-        };
-        const req = https.request(options, (res) => {
-            let data = '';
-            res.on('data', (chunk) => { data += chunk; });
-            res.on('end', () => {
-                try {
-                    resolve(JSON.parse(data));
-                }
-                catch {
-                    reject(new Error(`OSV response parse error: ${data}`));
-                }
-            });
-        });
-        req.on('error', (err) => reject(new Error(`OSV network error: ${err.message}`)));
-        req.write(body);
-        req.end();
-    });
-}
 /**
  * Queries OSV in a single batch request and fills cveDelta on each change.
  * Only semver versions are queried; non-semver entries keep cveDelta = null.
  */
 async function queryCVEDeltas(changes) {
-    const queryable = changes.filter((c) => isSemver(c.from.replace(/^[~^=<>]+/, '')) && isSemver(c.to.replace(/^[~^=<>]+/, '')));
+    const queryable = changes.filter((c) => (0, utils_1.isSemver)(c.from.replace(/^[~^=<>]+/, '')) && (0, utils_1.isSemver)(c.to.replace(/^[~^=<>]+/, '')));
     if (queryable.length === 0)
         return;
     const queries = queryable.flatMap((c) => [
@@ -215,7 +131,7 @@ async function queryCVEDeltas(changes) {
         { package: { name: c.name, ecosystem: 'npm' }, version: c.to.replace(/^[~^=<>]+/, '') },
     ]);
     core.info(`🔍 Querying OSV for ${queryable.length} package(s)...`);
-    const response = await batchOsvQuery(queries);
+    const response = await (0, utils_1.batchOsvQuery)(queries);
     queryable.forEach((change, i) => {
         const fromResult = response.results[i * 2];
         const toResult = response.results[i * 2 + 1];
@@ -223,18 +139,6 @@ async function queryCVEDeltas(changes) {
         const toVulns = toResult?.vulns?.length ?? 0;
         change.cveDelta = toVulns - fromVulns;
     });
-}
-// ============================================================================
-// Timestamp
-// ============================================================================
-function formatTimestamp() {
-    const now = new Date();
-    const day = now.getUTCDate();
-    const month = now.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' });
-    const year = now.getUTCFullYear();
-    const hours = String(now.getUTCHours()).padStart(2, '0');
-    const minutes = String(now.getUTCMinutes()).padStart(2, '0');
-    return `${day} ${month} ${year} \u2022 ${hours}:${minutes} UTC`;
 }
 // ============================================================================
 // Main signal entry point
@@ -252,10 +156,10 @@ async function runDependencyDiffSignal(inputs) {
         maxDeps: Math.max(1, parseInt(maxDepsRaw, 10) || 25),
     };
     core.info(`📦 Scanning dependency fields: ${options.includedFields.join(', ')}`);
-    const baseSha = getBaseSha();
+    const baseSha = (0, utils_1.getBaseSha)('DEPENDENCY_DIFF');
     core.info(`🔀 Base SHA: ${baseSha}`);
-    const basePkg = readPackageJsonAtSha(baseSha);
-    const headPkg = readHeadPackageJson();
+    const basePkg = (0, utils_1.readPackageJsonAtSha)(baseSha, 'DEPENDENCY_DIFF');
+    const headPkg = (0, utils_1.readHeadPackageJson)();
     const changes = [];
     for (const field of options.includedFields) {
         const baseDeps = basePkg[field] ?? {};
@@ -268,7 +172,7 @@ async function runDependencyDiffSignal(inputs) {
             if (baseVersion === headVersion)
                 continue;
             // Skip purely local / workspace references
-            if (isLocalDep(baseVersion) || isLocalDep(headVersion))
+            if ((0, utils_1.isLocalDep)(baseVersion) || (0, utils_1.isLocalDep)(headVersion))
                 continue;
             changes.push({
                 name,
@@ -295,7 +199,7 @@ async function runDependencyDiffSignal(inputs) {
             hasChanges: false,
             noChangesComment: `## \uD83D\uDCE6 Dependency changes\n\n` +
                 `No dependency changes detected in the latest commit.\n\n` +
-                `<sub>Updated ${formatTimestamp()}</sub>`,
+                `<sub>Updated ${(0, utils_1.formatTimestamp)()}</sub>`,
         };
     }
     core.info(`📋 Found ${limited.length} dependency change(s)`);
