@@ -35,6 +35,23 @@ export const signalTypeSchema = z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS', 'NEW_
 export type SignalType = z.infer<typeof signalTypeSchema>;
 
 /**
+ * Zod schemas that apply signal-specific defaults when inputs are empty.
+ * Used only when the corresponding signal is set — avoids YAML defaults
+ * that would trigger validation errors in template mode.
+ */
+const bundleAnalysisDefaultsSchema = z.object({
+  bundleBaselineBranch: z.string().transform((s) => (s.trim() || 'main')),
+  maxChanges: z.string().transform((s) => (s.trim() || '25')),
+  showGzip: z.string().transform((s) => (s.trim() || 'false')),
+});
+
+const depDefaultsSchema = z.object({
+  include: z.string().transform((s) => s.trim() || 'dependencies,devDependencies,optionalDependencies'),
+  enableCve: z.string().transform((s) => s.trim() || 'false'),
+  maxDeps: z.string().transform((s) => s.trim() || '25'),
+});
+
+/**
  * Active (non-deprecated) template types, derived from the constants package.
  * TEST_RESULTS is excluded — use signal: TEST_RESULTS instead.
  * Any new template added to templateTypeSchema in constants is automatically included here.
@@ -219,9 +236,9 @@ export function getActionInputs(): ActionInputs {
     maxDeps: core.getInput('max-deps', { required: false }),
     bundleReportPath: core.getInput('bundle-report-path', { required: false }) ?? '',
     bundleBaselinePath: core.getInput('bundle-baseline-path', { required: false }) ?? '',
-    bundleBaselineBranch: core.getInput('bundle-baseline-branch', { required: false }) ?? 'main',
-    maxChanges: core.getInput('max-changes', { required: false }) ?? '25',
-    showGzip: core.getInput('show-gzip', { required: false }) ?? 'false',
+    bundleBaselineBranch: core.getInput('bundle-baseline-branch', { required: false }) ?? '',
+    maxChanges: core.getInput('max-changes', { required: false }) ?? '',
+    showGzip: core.getInput('show-gzip', { required: false }) ?? '',
   };
 }
 
@@ -298,6 +315,31 @@ export function validateInputs(inputs: ActionInputs): void {
       `💡 Add signal: BUNDLE_ANALYSIS to your workflow, or remove these inputs.`
     );
   }
+}
+
+/**
+ * Applies signal-specific defaults via Zod when the corresponding signal is set.
+ * Returns a new inputs object with defaults populated — only called when hasSignal.
+ */
+export function resolveInputsForSignal(inputs: ActionInputs, signal: string): ActionInputs {
+  const trimmed = signal.trim();
+  if (trimmed === 'BUNDLE_ANALYSIS') {
+    const resolved = bundleAnalysisDefaultsSchema.parse({
+      bundleBaselineBranch: inputs.bundleBaselineBranch,
+      maxChanges: inputs.maxChanges,
+      showGzip: inputs.showGzip,
+    });
+    return { ...inputs, ...resolved };
+  }
+  if (trimmed === 'DEPENDENCY_DIFF' || trimmed === 'NEW_DEPENDENCY') {
+    const resolved = depDefaultsSchema.parse({
+      include: inputs.include,
+      enableCve: inputs.enableCve,
+      maxDeps: inputs.maxDeps,
+    });
+    return { ...inputs, ...resolved };
+  }
+  return inputs;
 }
 
 /**

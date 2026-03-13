@@ -60,9 +60,9 @@ function hasBundleReport(dirPath) {
 async function runBundleAnalysisSignal(inputs) {
     const reportPath = (inputs.bundleReportPath ?? '').trim();
     const baselinePath = (inputs.bundleBaselinePath ?? '').trim();
-    const baselineBranch = (inputs.bundleBaselineBranch ?? 'main').trim() || 'main';
-    const maxChanges = Math.max(1, parseInt(inputs.maxChanges ?? '25', 10) || 25);
-    const showGzip = (inputs.showGzip ?? 'false').toLowerCase() === 'true';
+    const baselineBranch = inputs.bundleBaselineBranch.trim() || 'main';
+    const maxChanges = Math.max(1, parseInt(inputs.maxChanges, 10) || 25);
+    const showGzip = inputs.showGzip.toLowerCase() === 'true';
     if (!reportPath || !baselinePath) {
         throw new Error('❌ BUNDLE_ANALYSIS requires "bundle-report-path" and "bundle-baseline-path"\n\n' +
             '💡 Example:\n' +

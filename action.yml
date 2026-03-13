@@ -43,17 +43,14 @@ inputs:
     description: 'Path to baseline bundle JSON directory after download (required for BUNDLE_ANALYSIS). Example: baseline/'
     required: false
   bundle-baseline-branch:
-    description: 'Target branch name for "baseline missing" log message. Default: main'
+    description: 'Target branch name for "baseline missing" log message (BUNDLE_ANALYSIS only). Default: main'
     required: false
-    default: 'main'
   max-changes:
     description: 'Maximum bundle diff rows to show (BUNDLE_ANALYSIS only). Default: 25'
     required: false
-    default: '25'
   show-gzip:
     description: 'Include gzip size delta in bundle diff (BUNDLE_ANALYSIS only). Default: false'
     required: false
-    default: 'false'
   include:
     description: 'Comma-separated list of dependency fields to scan for DEPENDENCY_DIFF. Default: dependencies,devDependencies,optionalDependencies (only used when signal is set)'
     required: false

@@ -70,8 +70,9 @@ async function run() {
         // ============================================================
         if (inputs.signal && inputs.signal.trim().length > 0) {
             core.info(`📊 Running signal: ${inputs.signal}`);
+            const resolvedInputs = (0, validation_1.resolveInputsForSignal)(inputs, inputs.signal);
             if (inputs.signal === 'DEPENDENCY_DIFF') {
-                const result = await (0, dependency_diff_1.runDependencyDiffSignal)(inputs);
+                const result = await (0, dependency_diff_1.runDependencyDiffSignal)(resolvedInputs);
                 if (result.hasChanges) {
                     inputs.template = 'CUSTOM_TABLE';
                     inputs.templateData = JSON.stringify(result.data);
@@ -101,7 +102,7 @@ async function run() {
                 }
             }
             else if (inputs.signal === 'NEW_DEPENDENCY') {
-                const result = await (0, new_dependency_1.runNewDependencySignal)(inputs);
+                const result = await (0, new_dependency_1.runNewDependencySignal)(resolvedInputs);
                 if (result.hasChanges) {
                     inputs.template = 'CUSTOM_TABLE';
                     inputs.templateData = JSON.stringify(result.data);
@@ -111,7 +112,7 @@ async function run() {
                 }
             }
             else if (inputs.signal === 'BUNDLE_ANALYSIS') {
-                const result = await (0, bundle_analysis_1.runBundleAnalysisSignal)(inputs);
+                const result = await (0, bundle_analysis_1.runBundleAnalysisSignal)(resolvedInputs);
                 if (result.skip) {
                     core.info('Skipping PR comment (baseline not found)');
                     return;

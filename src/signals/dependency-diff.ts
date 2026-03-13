@@ -151,17 +151,13 @@ async function queryCVEDeltas(changes: DepChange[]): Promise<void> {
 // ============================================================================
 
 export async function runDependencyDiffSignal(inputs: ActionInputs): Promise<DependencyDiffResult> {
-  const includeRaw = inputs.include.trim() || 'dependencies,devDependencies,optionalDependencies';
-  const enableCveRaw = inputs.enableCve.trim() || 'false';
-  const maxDepsRaw = inputs.maxDeps.trim() || '25';
-
   const options: DependencyDiffOptions = {
-    includedFields: includeRaw
+    includedFields: inputs.include
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
-    enableCve: enableCveRaw.toLowerCase() === 'true',
-    maxDeps: Math.max(1, parseInt(maxDepsRaw, 10) || 25),
+    enableCve: inputs.enableCve.toLowerCase() === 'true',
+    maxDeps: Math.max(1, parseInt(inputs.maxDeps, 10) || 25),
   };
 
   core.info(`📦 Scanning dependency fields: ${options.includedFields.join(', ')}`);

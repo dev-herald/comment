@@ -37,6 +37,7 @@ exports.activeTemplateTypeSchema = exports.signalTypeSchema = exports.deployment
 exports.formatZodError = formatZodError;
 exports.getActionInputs = getActionInputs;
 exports.validateInputs = validateInputs;
+exports.resolveInputsForSignal = resolveInputsForSignal;
 exports.buildRequestConfig = buildRequestConfig;
 const core = __importStar(require("@actions/core"));
 const zod_1 = require("zod");
@@ -56,6 +57,21 @@ exports.deploymentStatusSchema = zod_1.z.enum(['building', 'queued', 'success', 
  * "Allowed values" error before reaching the signal handler in main.ts.
  */
 exports.signalTypeSchema = zod_1.z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS', 'NEW_DEPENDENCY', 'BUNDLE_ANALYSIS']);
+/**
+ * Zod schemas that apply signal-specific defaults when inputs are empty.
+ * Used only when the corresponding signal is set — avoids YAML defaults
+ * that would trigger validation errors in template mode.
+ */
+const bundleAnalysisDefaultsSchema = zod_1.z.object({
+    bundleBaselineBranch: zod_1.z.string().transform((s) => (s.trim() || 'main')),
+    maxChanges: zod_1.z.string().transform((s) => (s.trim() || '25')),
+    showGzip: zod_1.z.string().transform((s) => (s.trim() || 'false')),
+});
+const depDefaultsSchema = zod_1.z.object({
+    include: zod_1.z.string().transform((s) => s.trim() || 'dependencies,devDependencies,optionalDependencies'),
+    enableCve: zod_1.z.string().transform((s) => s.trim() || 'false'),
+    maxDeps: zod_1.z.string().transform((s) => s.trim() || '25'),
+});
 /**
  * Active (non-deprecated) template types, derived from the constants package.
  * TEST_RESULTS is excluded — use signal: TEST_RESULTS instead.
@@ -229,9 +245,9 @@ function getActionInputs() {
         maxDeps: core.getInput('max-deps', { required: false }),
         bundleReportPath: core.getInput('bundle-report-path', { required: false }) ?? '',
         bundleBaselinePath: core.getInput('bundle-baseline-path', { required: false }) ?? '',
-        bundleBaselineBranch: core.getInput('bundle-baseline-branch', { required: false }) ?? 'main',
-        maxChanges: core.getInput('max-changes', { required: false }) ?? '25',
-        showGzip: core.getInput('show-gzip', { required: false }) ?? 'false',
+        bundleBaselineBranch: core.getInput('bundle-baseline-branch', { required: false }) ?? '',
+        maxChanges: core.getInput('max-changes', { required: false }) ?? '',
+        showGzip: core.getInput('show-gzip', { required: false }) ?? '',
     };
 }
 /**
@@ -296,6 +312,30 @@ function validateInputs(inputs) {
         throw new Error(`❌ The following input(s) require signal: BUNDLE_ANALYSIS: ${provided.map((n) => `"${n}"`).join(', ')}\n\n` +
             `💡 Add signal: BUNDLE_ANALYSIS to your workflow, or remove these inputs.`);
     }
+}
+/**
+ * Applies signal-specific defaults via Zod when the corresponding signal is set.
+ * Returns a new inputs object with defaults populated — only called when hasSignal.
+ */
+function resolveInputsForSignal(inputs, signal) {
+    const trimmed = signal.trim();
+    if (trimmed === 'BUNDLE_ANALYSIS') {
+        const resolved = bundleAnalysisDefaultsSchema.parse({
+            bundleBaselineBranch: inputs.bundleBaselineBranch,
+            maxChanges: inputs.maxChanges,
+            showGzip: inputs.showGzip,
+        });
+        return { ...inputs, ...resolved };
+    }
+    if (trimmed === 'DEPENDENCY_DIFF' || trimmed === 'NEW_DEPENDENCY') {
+        const resolved = depDefaultsSchema.parse({
+            include: inputs.include,
+            enableCve: inputs.enableCve,
+            maxDeps: inputs.maxDeps,
+        });
+        return { ...inputs, ...resolved };
+    }
+    return inputs;
 }
 /**
  * Builds the request configuration based on inputs with Zod validation

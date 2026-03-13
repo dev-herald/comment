@@ -1,5 +1,5 @@
 import * as core from '@actions/core';
-import { getActionInputs, validateInputs, buildRequestConfig } from './validation';
+import { getActionInputs, validateInputs, buildRequestConfig, resolveInputsForSignal } from './validation';
 import { buildHeaders, makeHttpRequest } from './api';
 import { processResponse } from './output';
 import { parseTestResultsInput, parseNamedResultEntries } from './parsers/index';
@@ -38,9 +38,10 @@ async function run(): Promise<void> {
     // ============================================================
     if (inputs.signal && inputs.signal.trim().length > 0) {
       core.info(`📊 Running signal: ${inputs.signal}`);
+      const resolvedInputs = resolveInputsForSignal(inputs, inputs.signal);
 
       if (inputs.signal === 'DEPENDENCY_DIFF') {
-        const result = await runDependencyDiffSignal(inputs);
+        const result = await runDependencyDiffSignal(resolvedInputs);
         if (result.hasChanges) {
           inputs.template = 'CUSTOM_TABLE';
           inputs.templateData = JSON.stringify(result.data);
@@ -68,7 +69,7 @@ async function run(): Promise<void> {
           inputs.comment = result.noResultsComment ?? '';
         }
       } else if (inputs.signal === 'NEW_DEPENDENCY') {
-        const result = await runNewDependencySignal(inputs);
+        const result = await runNewDependencySignal(resolvedInputs);
         if (result.hasChanges) {
           inputs.template = 'CUSTOM_TABLE';
           inputs.templateData = JSON.stringify(result.data);
@@ -76,7 +77,7 @@ async function run(): Promise<void> {
           inputs.comment = result.noChangesComment!;
         }
       } else if (inputs.signal === 'BUNDLE_ANALYSIS') {
-        const result = await runBundleAnalysisSignal(inputs);
+        const result = await runBundleAnalysisSignal(resolvedInputs);
         if (result.skip) {
           core.info('Skipping PR comment (baseline not found)');
           return;
