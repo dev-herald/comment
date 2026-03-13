@@ -41,6 +41,7 @@ const index_1 = require("./parsers/index");
 const dependency_diff_1 = require("./signals/dependency-diff");
 const test_results_1 = require("./signals/test-results");
 const new_dependency_1 = require("./signals/new-dependency");
+const bundle_analysis_1 = require("./signals/bundle-analysis");
 /**
  * Main action entry point
  */
@@ -101,6 +102,20 @@ async function run() {
             }
             else if (inputs.signal === 'NEW_DEPENDENCY') {
                 const result = await (0, new_dependency_1.runNewDependencySignal)(inputs);
+                if (result.hasChanges) {
+                    inputs.template = 'CUSTOM_TABLE';
+                    inputs.templateData = JSON.stringify(result.data);
+                }
+                else {
+                    inputs.comment = result.noChangesComment;
+                }
+            }
+            else if (inputs.signal === 'BUNDLE_ANALYSIS') {
+                const result = await (0, bundle_analysis_1.runBundleAnalysisSignal)(inputs);
+                if (result.skip) {
+                    core.info('Skipping PR comment (baseline not found)');
+                    return;
+                }
                 if (result.hasChanges) {
                     inputs.template = 'CUSTOM_TABLE';
                     inputs.templateData = JSON.stringify(result.data);
