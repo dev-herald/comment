@@ -55,17 +55,14 @@ inputs:
     required: false
     default: 'false'
   include:
-    description: 'Comma-separated list of dependency fields to scan for DEPENDENCY_DIFF. Default: dependencies,devDependencies,optionalDependencies'
+    description: 'Comma-separated list of dependency fields to scan for DEPENDENCY_DIFF. Default: dependencies,devDependencies,optionalDependencies (only used when signal is set)'
     required: false
-    default: 'dependencies,devDependencies,optionalDependencies'
   enable-cve:
-    description: 'Set to "true" to query the OSV database for CVE counts per dependency version (DEPENDENCY_DIFF only). Default: false'
+    description: 'Set to "true" to query the OSV database for CVE counts per dependency version (DEPENDENCY_DIFF only). Default: false (only used when signal is set)'
     required: false
-    default: 'false'
   max-deps:
-    description: 'Maximum number of dependency changes to show in the DEPENDENCY_DIFF table. Default: 25'
+    description: 'Maximum number of dependency changes to show in the DEPENDENCY_DIFF table. Default: 25 (only used when signal is set)'
     required: false
-    default: '25'
   sticky-id:
     description: 'Optional identifier for updateable comments. Comments with the same sticky-id will update instead of creating new ones. Example: "deployment-status"'
     required: false
