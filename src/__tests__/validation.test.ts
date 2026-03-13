@@ -34,6 +34,11 @@ function makeDeploymentInputs(overrides: Partial<ActionInputs> = {}): ActionInpu
     include: '',
     enableCve: '',
     maxDeps: '',
+    bundleReportPath: '',
+    bundleBaselinePath: '',
+    bundleBaselineBranch: '',
+    maxChanges: '',
+    showGzip: '',
     ...overrides,
   };
 }
@@ -301,6 +306,11 @@ describe('validateInputs', () => {
       include: '',
       enableCve: '',
       maxDeps: '',
+      bundleReportPath: '',
+      bundleBaselinePath: '',
+      bundleBaselineBranch: '',
+      maxChanges: '',
+      showGzip: '',
       ...overrides,
     };
   }
@@ -348,6 +358,24 @@ describe('validateInputs', () => {
   it('does not throw when signal-only inputs are set alongside signal', () => {
     expect(() =>
       validateInputs(makeRawInputs({ signal: 'DEPENDENCY_DIFF', include: 'dependencies', enableCve: 'true', maxDeps: '10' }))
+    ).not.toThrow();
+  });
+
+  it('throws when bundle inputs are set without signal: BUNDLE_ANALYSIS', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({ bundleReportPath: '.next/analyze/' }))
+    ).toThrow(/BUNDLE_ANALYSIS/);
+  });
+
+  it('throws when bundle inputs are set with a different signal', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({ signal: 'DEPENDENCY_DIFF', bundleReportPath: '.next/analyze/' }))
+    ).toThrow(/BUNDLE_ANALYSIS/);
+  });
+
+  it('does not throw when bundle inputs are set with signal: BUNDLE_ANALYSIS', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({ signal: 'BUNDLE_ANALYSIS', bundleReportPath: '.next/analyze/', bundleBaselinePath: 'baseline/' }))
     ).not.toThrow();
   });
 

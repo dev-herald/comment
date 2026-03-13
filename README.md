@@ -12,6 +12,7 @@ Automated PR comments via [Dev Herald](https://dev-herald.com) — let workflows
 
 - [Sticky comments](https://dev-herald.com/docs/sticky-comments) — update instead of cluttering threads
 - [Pre-built templates](https://dev-herald.com/docs/templates) — include deployment status, test results, table summaries, migration highlights (and more!)
+- **Signals** — DEPENDENCY_DIFF, TEST_RESULTS, NEW_DEPENDENCY, BUNDLE_ANALYSIS (diff PR bundle vs baseline)
 - Full GitHub Markdown support — plain comments when you want them  
 - Faster feedback loops — CI/CD results automatically surface in PRs
 

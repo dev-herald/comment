@@ -6,6 +6,7 @@ import { parseTestResultsInput, parseNamedResultEntries } from './parsers/index'
 import { runDependencyDiffSignal } from './signals/dependency-diff';
 import { runTestResultsSignal } from './signals/test-results';
 import { runNewDependencySignal } from './signals/new-dependency';
+import { runBundleAnalysisSignal } from './signals/bundle-analysis';
 
 /**
  * Main action entry point
@@ -68,6 +69,18 @@ async function run(): Promise<void> {
         }
       } else if (inputs.signal === 'NEW_DEPENDENCY') {
         const result = await runNewDependencySignal(inputs);
+        if (result.hasChanges) {
+          inputs.template = 'CUSTOM_TABLE';
+          inputs.templateData = JSON.stringify(result.data);
+        } else {
+          inputs.comment = result.noChangesComment!;
+        }
+      } else if (inputs.signal === 'BUNDLE_ANALYSIS') {
+        const result = await runBundleAnalysisSignal(inputs);
+        if (result.skip) {
+          core.info('Skipping PR comment (baseline not found)');
+          return;
+        }
         if (result.hasChanges) {
           inputs.template = 'CUSTOM_TABLE';
           inputs.templateData = JSON.stringify(result.data);

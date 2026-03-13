@@ -31,7 +31,7 @@ export type DeploymentStatus = z.infer<typeof deploymentStatusSchema>;
  * Validated eagerly in validateInputs() so unknown signals fail with a Zod
  * "Allowed values" error before reaching the signal handler in main.ts.
  */
-export const signalTypeSchema = z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS', 'NEW_DEPENDENCY']);
+export const signalTypeSchema = z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS', 'NEW_DEPENDENCY', 'BUNDLE_ANALYSIS']);
 export type SignalType = z.infer<typeof signalTypeSchema>;
 
 /**
@@ -83,6 +83,11 @@ const rawInputsSchema = z.object({
   include: z.string(),
   enableCve: z.string(),
   maxDeps: z.string(),
+  bundleReportPath: z.string(),
+  bundleBaselinePath: z.string(),
+  bundleBaselineBranch: z.string(),
+  maxChanges: z.string(),
+  showGzip: z.string(),
 });
 
 // ============================================================================
@@ -212,6 +217,11 @@ export function getActionInputs(): ActionInputs {
     include: core.getInput('include', { required: false }),
     enableCve: core.getInput('enable-cve', { required: false }),
     maxDeps: core.getInput('max-deps', { required: false }),
+    bundleReportPath: core.getInput('bundle-report-path', { required: false }) ?? '',
+    bundleBaselinePath: core.getInput('bundle-baseline-path', { required: false }) ?? '',
+    bundleBaselineBranch: core.getInput('bundle-baseline-branch', { required: false }) ?? 'main',
+    maxChanges: core.getInput('max-changes', { required: false }) ?? '25',
+    showGzip: core.getInput('show-gzip', { required: false }) ?? 'false',
   };
 }
 
@@ -255,6 +265,11 @@ export function validateInputs(inputs: ActionInputs): void {
     ['include', inputs.include],
     ['enable-cve', inputs.enableCve],
     ['max-deps', inputs.maxDeps],
+    ['bundle-report-path', inputs.bundleReportPath],
+    ['bundle-baseline-path', inputs.bundleBaselinePath],
+    ['bundle-baseline-branch', inputs.bundleBaselineBranch],
+    ['max-changes', inputs.maxChanges],
+    ['show-gzip', inputs.showGzip],
   ];
 
   const illegalInputs = signalOnlyInputs
@@ -264,7 +279,23 @@ export function validateInputs(inputs: ActionInputs): void {
   if (!hasSignal && illegalInputs.length > 0) {
     throw new Error(
       `❌ The following input(s) are only valid when "signal" is set: ${illegalInputs.map((n) => `"${n}"`).join(', ')}\n\n` +
-      `💡 Either add "signal: DEPENDENCY_DIFF" to your workflow, or remove these inputs.`
+      `💡 Add a signal (e.g. DEPENDENCY_DIFF, BUNDLE_ANALYSIS) to your workflow, or remove these inputs.`
+    );
+  }
+
+  const bundleInputs: Array<[string, string]> = [
+    ['bundle-report-path', inputs.bundleReportPath],
+    ['bundle-baseline-path', inputs.bundleBaselinePath],
+    ['bundle-baseline-branch', inputs.bundleBaselineBranch],
+    ['max-changes', inputs.maxChanges],
+    ['show-gzip', inputs.showGzip],
+  ];
+  const hasBundleInputs = bundleInputs.some(([, value]) => value.trim().length > 0);
+  if (hasBundleInputs && inputs.signal.trim() !== 'BUNDLE_ANALYSIS') {
+    const provided = bundleInputs.filter(([, value]) => value.trim().length > 0).map(([name]) => name);
+    throw new Error(
+      `❌ The following input(s) require signal: BUNDLE_ANALYSIS: ${provided.map((n) => `"${n}"`).join(', ')}\n\n` +
+      `💡 Add signal: BUNDLE_ANALYSIS to your workflow, or remove these inputs.`
     );
   }
 }

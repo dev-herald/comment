@@ -63,6 +63,11 @@ export interface ActionInputs {
   include: string;
   enableCve: string;
   maxDeps: string;
+  bundleReportPath: string;
+  bundleBaselinePath: string;
+  bundleBaselineBranch: string;
+  maxChanges: string;
+  showGzip: string;
 }
 
 export interface RequestConfig {
