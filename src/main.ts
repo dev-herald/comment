@@ -42,12 +42,12 @@ async function run(): Promise<void> {
 
       if (inputs.signal === 'DEPENDENCY_DIFF') {
         const result = await runDependencyDiffSignal(resolvedInputs);
-        if (result.hasChanges) {
-          inputs.template = 'CUSTOM_TABLE';
-          inputs.templateData = JSON.stringify(result.data);
-        } else {
-          inputs.comment = result.noChangesComment!;
+        if (!result.hasChanges) {
+          core.info('Skipping PR comment (no dependency changes)');
+          return;
         }
+        inputs.template = 'CUSTOM_TABLE';
+        inputs.templateData = JSON.stringify(result.data);
       } else if (inputs.signal === 'TEST_RESULTS') {
         if (!inputs.testResults || inputs.testResults.trim().length === 0) {
           throw new Error(
@@ -70,12 +70,12 @@ async function run(): Promise<void> {
         }
       } else if (inputs.signal === 'NEW_DEPENDENCY') {
         const result = await runNewDependencySignal(resolvedInputs);
-        if (result.hasChanges) {
-          inputs.template = 'CUSTOM_TABLE';
-          inputs.templateData = JSON.stringify(result.data);
-        } else {
-          inputs.comment = result.noChangesComment!;
+        if (!result.hasChanges) {
+          core.info('Skipping PR comment (no new dependencies)');
+          return;
         }
+        inputs.template = 'CUSTOM_TABLE';
+        inputs.templateData = JSON.stringify(result.data);
       } else if (inputs.signal === 'BUNDLE_ANALYSIS') {
         const result = await runBundleAnalysisSignal(resolvedInputs);
         if (result.skip) {
