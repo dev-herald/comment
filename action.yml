@@ -24,12 +24,14 @@ inputs:
       YAML list of named test result files. When provided with signal: TEST_RESULTS,
       the action reads and parses these files automatically — no template-data needed.
       Each entry requires a display name and a path to a JSON reporter output file.
+      Optional per entry: link or url (HTTPS) — used as the suite name link in the table.
       Supported formats: Playwright JSON reporter, Vitest JSON reporter.
 
       Example:
         test-results: |
           - name: Unit Tests
             path: vitest-results/unit.json
+            link: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           - name: E2E Tests
             path: playwright-results/results.json
     required: false

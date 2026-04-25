@@ -68,6 +68,8 @@ Copy-paste examples for the [Dev Herald](https://dev-herald.com) `comment` actio
 
 ## Test Results Signal
 
+Each item needs **`name`** and **`path`** to the JSON reporter file. Counts come from that file. Add optional **`link`** (or **`url`**) to make the suite name clickable; **default to the current workflow run** (same URL for every suite is fine). If you prefer, set `link` to any other HTTPS URL—e.g. a **hosted report**, **artifact** download, or a step output.
+
 ```yaml
 - name: Post test results
   uses: dev-herald/comment@v1
@@ -78,8 +80,10 @@ Copy-paste examples for the [Dev Herald](https://dev-herald.com) `comment` actio
     test-results: |
       - name: Unit Tests
         path: vitest-results/results.json
+        link: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       - name: E2E Tests
-        path: playwright-results/results.json
+        path: playwright-report/results.json
+        link: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 ```
 
 ## Bundle Analysis Signal

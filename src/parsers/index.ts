@@ -13,6 +13,8 @@ export type { ParsedTestResults, TestSuite } from './types';
 export interface TestResultEntry {
   name: string;
   path: string;
+  /** Optional URL for the suite name link in the PR table (from workflow, e.g. run or report). */
+  link?: string;
 }
 
 /**
@@ -24,6 +26,7 @@ export interface TestResultEntry {
  *   path: vitest-results/unit.json
  * - name: E2E Tests
  *   path: playwright-results/results.json
+ *   link: https://github.com/owner/repo/actions/runs/123
  * ```
  */
 export function parseTestResultsInput(input: string): TestResultEntry[] {
@@ -41,6 +44,10 @@ export function parseTestResultsInput(input: string): TestResultEntry[] {
       current.name = extractYamlValue(trimmed.slice('name:'.length));
     } else if (trimmed.startsWith('path:') && current) {
       current.path = extractYamlValue(trimmed.slice('path:'.length));
+    } else if (trimmed.startsWith('link:') && current) {
+      current.link = extractYamlValue(trimmed.slice('link:'.length));
+    } else if (trimmed.startsWith('url:') && current) {
+      current.link = extractYamlValue(trimmed.slice('url:'.length));
     }
   }
 
@@ -53,6 +60,7 @@ export function parseTestResultsInput(input: string): TestResultEntry[] {
       '    test-results: |\n' +
       '      - name: Unit Tests\n' +
       '        path: vitest-results/unit.json\n' +
+      '        link: https://...   # optional, same for url:\n' +
       '      - name: E2E Tests\n' +
       '        path: playwright-results/results.json'
     );
@@ -83,7 +91,11 @@ function formatDuration(ms: number): string {
   return `${Math.round(ms)}ms`;
 }
 
-function aggregateToSuite(name: string, result: ParsedTestResults): TestSuite {
+function aggregateToSuite(
+  name: string,
+  result: ParsedTestResults,
+  options?: { link?: string }
+): TestSuite {
   const passed = result.testSuites.reduce((sum, s) => sum + s.passed, 0);
   const failed = result.testSuites.reduce((sum, s) => sum + s.failed, 0);
   const skipped = result.testSuites.reduce((sum, s) => sum + (s.skipped ?? 0), 0);
@@ -95,6 +107,9 @@ function aggregateToSuite(name: string, result: ParsedTestResults): TestSuite {
   const suite: TestSuite = { name, passed, failed };
   if (skipped > 0) suite.skipped = skipped;
   if (totalMs > 0) suite.duration = formatDuration(totalMs);
+  if (options?.link && options.link.trim() !== '') {
+    suite.link = options.link.trim();
+  }
 
   return suite;
 }
@@ -108,7 +123,7 @@ export async function parseNamedResultEntries(entries: TestResultEntry[]): Promi
 
   for (const entry of entries) {
     const result = await parseResultFile(entry.path);
-    testSuites.push(aggregateToSuite(entry.name, result));
+    testSuites.push(aggregateToSuite(entry.name, result, { link: entry.link }));
   }
 
   const totalPassed = testSuites.reduce((sum, s) => sum + s.passed, 0);

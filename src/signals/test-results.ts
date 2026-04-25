@@ -26,11 +26,15 @@ export function runTestResultsSignal(parsed: ParsedTestResults): TestResultsSign
     headers: ['Suite', 'Passed', 'Failed', 'Skipped', 'Duration'],
     rows: parsed.testSuites.map((suite) => ({
       cells: [
-        { text: suite.name, ...(suite.link ? { link: suite.link } : {}) },
-        { text: String(suite.passed) },
-        { text: String(suite.failed) },
-        { text: String(suite.skipped ?? 0) },
-        { text: suite.duration ?? '\u2014' },
+        {
+          markdown: suite.link
+            ? `[${suite.name}](${suite.link})`
+            : suite.name,
+        },
+        { markdown: String(suite.passed) },
+        { markdown: String(suite.failed) },
+        { markdown: String(suite.skipped ?? 0) },
+        { markdown: suite.duration ?? '\u2014' },
       ],
     })),
     showTimestamp: parsed.showTimestamp,

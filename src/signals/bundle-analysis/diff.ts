@@ -132,9 +132,9 @@ export function computeDiff(
     headers: ['Chunk', 'Delta', 'New Size'],
     rows: limited.map((r) => ({
       cells: [
-        { text: prefix(r) },
-        { text: formatDelta(r.deltaBytes) },
-        { text: r.changeType === 'removed' ? '\u2014' : formatBytes(r.newSizeBytes) },
+        { markdown: prefix(r) },
+        { markdown: formatDelta(r.deltaBytes) },
+        { markdown: r.changeType === 'removed' ? '\u2014' : formatBytes(r.newSizeBytes) },
       ],
     })),
     showTimestamp: true,
