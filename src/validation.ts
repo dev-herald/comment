@@ -52,11 +52,11 @@ const depDefaultsSchema = z.object({
 });
 
 /**
- * Active (non-deprecated) template types, derived from the constants package.
- * TEST_RESULTS is excluded — use signal: TEST_RESULTS instead.
- * Any new template added to templateTypeSchema in constants is automatically included here.
+ * Active template types for this action, aligned with the constants package.
+ * (TEST_RESULTS is not a valid template in @dev-herald/constants v2+ — use signal: TEST_RESULTS;
+ * a dedicated error is thrown in buildRequestConfig if it appears as input.)
  */
-export const activeTemplateTypeSchema = templateTypeSchema.exclude(['TEST_RESULTS']);
+export const activeTemplateTypeSchema = templateTypeSchema;
 export type ActiveTemplateType = z.infer<typeof activeTemplateTypeSchema>;
 
 /**

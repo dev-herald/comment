@@ -121,9 +121,13 @@ describe('runBundleAnalysisSignal', () => {
     expect(result.skip).toBeUndefined();
     expect(result.hasChanges).toBe(true);
     expect(result.data).toBeDefined();
-    const data = result.data as { title?: string; rows?: unknown[] };
+    const data = result.data as {
+      title?: string;
+      rows?: { cells: { markdown: string }[] }[];
+    };
     expect(data?.title).toContain('Bundle size');
     expect(data?.rows?.length ?? 0).toBeGreaterThan(0);
+    expect(data?.rows?.[0]?.cells?.[0]?.markdown).toMatch(/^\+ |^[-\u2212] |^pages\//);
   });
 
   it('throws when bundle-report-path and bundle-baseline-path are missing', async () => {

@@ -126,6 +126,40 @@ describe('buildRequestConfig – deployment template happy paths', () => {
 });
 
 // ---------------------------------------------------------------------------
+// CUSTOM_TABLE template
+// ---------------------------------------------------------------------------
+
+describe('buildRequestConfig – CUSTOM_TABLE template', () => {
+  it('accepts per-cell markdown (links, empty cells) and returns template request body', () => {
+    const inputs = makeDeploymentInputs({
+      template: 'CUSTOM_TABLE',
+      templateData: JSON.stringify({
+        title: 'Summary',
+        headers: ['Link', 'Note'],
+        rows: [
+          {
+            cells: [
+              { markdown: '[label](https://example.com)' },
+              { markdown: '' },
+            ],
+          },
+          { cells: [{ markdown: 'plain' }, { markdown: 'inline `code`' }] },
+        ],
+        showTimestamp: true,
+      }),
+    });
+    const config = buildRequestConfig(inputs);
+    expect(config.mode).toBe('template');
+    expect((config.requestBody as TemplateCommentRequest).template).toBe('CUSTOM_TABLE');
+    const data = (config.requestBody as TemplateCommentRequest).data as {
+      rows: { cells: { markdown: string }[] }[];
+    };
+    expect(data.rows[0].cells[0].markdown).toBe('[label](https://example.com)');
+    expect(data.rows[0].cells[1].markdown).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Deployment template – error paths
 // ---------------------------------------------------------------------------
 
