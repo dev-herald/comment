@@ -73,11 +73,11 @@ const depDefaultsSchema = zod_1.z.object({
     maxDeps: zod_1.z.string().transform((s) => s.trim() || '25'),
 });
 /**
- * Active (non-deprecated) template types, derived from the constants package.
- * TEST_RESULTS is excluded — use signal: TEST_RESULTS instead.
- * Any new template added to templateTypeSchema in constants is automatically included here.
+ * Active template types for this action, aligned with the constants package.
+ * (TEST_RESULTS is not a valid template in @dev-herald/constants v2+ — use signal: TEST_RESULTS;
+ * a dedicated error is thrown in buildRequestConfig if it appears as input.)
  */
-exports.activeTemplateTypeSchema = constants_1.templateTypeSchema.exclude(['TEST_RESULTS']);
+exports.activeTemplateTypeSchema = constants_1.templateTypeSchema;
 /**
  * Deployment schema with:
  *  - deploymentStatus constrained to the known enum values

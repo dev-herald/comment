@@ -103,6 +103,36 @@ function makeDeploymentInputs(overrides = {}) {
     });
 });
 // ---------------------------------------------------------------------------
+// CUSTOM_TABLE template
+// ---------------------------------------------------------------------------
+(0, vitest_1.describe)('buildRequestConfig – CUSTOM_TABLE template', () => {
+    (0, vitest_1.it)('accepts per-cell markdown (links, empty cells) and returns template request body', () => {
+        const inputs = makeDeploymentInputs({
+            template: 'CUSTOM_TABLE',
+            templateData: JSON.stringify({
+                title: 'Summary',
+                headers: ['Link', 'Note'],
+                rows: [
+                    {
+                        cells: [
+                            { markdown: '[label](https://example.com)' },
+                            { markdown: '' },
+                        ],
+                    },
+                    { cells: [{ markdown: 'plain' }, { markdown: 'inline `code`' }] },
+                ],
+                showTimestamp: true,
+            }),
+        });
+        const config = (0, validation_1.buildRequestConfig)(inputs);
+        (0, vitest_1.expect)(config.mode).toBe('template');
+        (0, vitest_1.expect)(config.requestBody.template).toBe('CUSTOM_TABLE');
+        const data = config.requestBody.data;
+        (0, vitest_1.expect)(data.rows[0].cells[0].markdown).toBe('[label](https://example.com)');
+        (0, vitest_1.expect)(data.rows[0].cells[1].markdown).toBe('');
+    });
+});
+// ---------------------------------------------------------------------------
 // Deployment template – error paths
 // ---------------------------------------------------------------------------
 (0, vitest_1.describe)('buildRequestConfig – deployment template errors', () => {
