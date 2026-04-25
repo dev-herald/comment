@@ -108,6 +108,7 @@ const FIXTURES_DIR = path_1.default.join(__dirname, '../test-data/bundle-analysi
         const data = result.data;
         (0, vitest_1.expect)(data?.title).toContain('Bundle size');
         (0, vitest_1.expect)(data?.rows?.length ?? 0).toBeGreaterThan(0);
+        (0, vitest_1.expect)(data?.rows?.[0]?.cells?.[0]?.markdown).toMatch(/^\+ |^[-\u2212] |^pages\//);
     });
     (0, vitest_1.it)('throws when bundle-report-path and bundle-baseline-path are missing', async () => {
         await (0, vitest_1.expect)((0, bundle_analysis_1.runBundleAnalysisSignal)(makeInputs({ bundleReportPath: '', bundleBaselinePath: '' }))).rejects.toThrow('bundle-report-path');
