@@ -1,5 +1,7 @@
 # Cookbook
 
+Copy-paste examples for the [Dev Herald](https://dev-herald.com) `comment` action. Template details: [main docs](https://dev-herald.com/docs/features/templates).
+
 ## Deployment Template
 
 ```yaml
