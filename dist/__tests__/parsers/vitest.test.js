@@ -186,6 +186,19 @@ function loadFixture(name) {
         (0, vitest_1.expect)(entries).toHaveLength(1);
         (0, vitest_1.expect)(entries[0]).toEqual({ name: 'Integration Tests', path: 'results/integration.json' });
     });
+    (0, vitest_1.it)('parses optional link and url (alias) per entry', () => {
+        const withLink = `
+- name: Unit Tests
+  path: unit.json
+  link: https://github.com/owner/repo/actions/runs/1
+- name: E2E
+  path: e2e.json
+  url: "https://example.com/report"
+`.trim();
+        const a = (0, index_1.parseTestResultsInput)(withLink);
+        (0, vitest_1.expect)(a[0].link).toBe('https://github.com/owner/repo/actions/runs/1');
+        (0, vitest_1.expect)(a[1].link).toBe('https://example.com/report');
+    });
     (0, vitest_1.it)('strips surrounding quotes from values', () => {
         const input = `- name: "Quoted Name"\n  path: 'some/path.json'`;
         const entries = (0, index_1.parseTestResultsInput)(input);
@@ -246,5 +259,16 @@ function loadFixture(name) {
         const result = await (0, index_1.parseNamedResultEntries)(entries);
         (0, vitest_1.expect)(result.summary).toMatch(/^2 failed/);
         (0, vitest_1.expect)(result.testSuites[0].failed).toBe(2);
+    });
+    (0, vitest_1.it)('passes through optional link from the entry to the aggregated suite', async () => {
+        const entries = [
+            {
+                name: 'Unit Tests',
+                path: path_1.default.join(FIXTURES_DIR, 'all-passing.json'),
+                link: 'https://github.com/owner/repo/actions/runs/99',
+            },
+        ];
+        const result = await (0, index_1.parseNamedResultEntries)(entries);
+        (0, vitest_1.expect)(result.testSuites[0].link).toBe('https://github.com/owner/repo/actions/runs/99');
     });
 });

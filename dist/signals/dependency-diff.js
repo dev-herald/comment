@@ -205,10 +205,10 @@ async function runDependencyDiffSignal(inputs) {
         headers: ['Package', 'From \u2192 To', 'Type', 'CVEs'],
         rows: limited.map((c) => ({
             cells: [
-                { text: c.name },
-                { text: `${formatVersion(c.from)} \u2192 ${formatVersion(c.to)}` },
-                { text: formatChangeType(c.changeType) },
-                { text: formatCveDelta(c.cveDelta) },
+                { markdown: c.name },
+                { markdown: `${formatVersion(c.from)} \u2192 ${formatVersion(c.to)}` },
+                { markdown: formatChangeType(c.changeType) },
+                { markdown: formatCveDelta(c.cveDelta) },
             ],
         })),
         showTimestamp: true,

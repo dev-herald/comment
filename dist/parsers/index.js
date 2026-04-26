@@ -17,6 +17,7 @@ const vitest_1 = require("./vitest");
  *   path: vitest-results/unit.json
  * - name: E2E Tests
  *   path: playwright-results/results.json
+ *   link: https://github.com/owner/repo/actions/runs/123
  * ```
  */
 function parseTestResultsInput(input) {
@@ -37,6 +38,12 @@ function parseTestResultsInput(input) {
         else if (trimmed.startsWith('path:') && current) {
             current.path = extractYamlValue(trimmed.slice('path:'.length));
         }
+        else if (trimmed.startsWith('link:') && current) {
+            current.link = extractYamlValue(trimmed.slice('link:'.length));
+        }
+        else if (trimmed.startsWith('url:') && current) {
+            current.link = extractYamlValue(trimmed.slice('url:'.length));
+        }
     }
     if (current?.name && current?.path)
         entries.push(current);
@@ -46,6 +53,7 @@ function parseTestResultsInput(input) {
             '    test-results: |\n' +
             '      - name: Unit Tests\n' +
             '        path: vitest-results/unit.json\n' +
+            '        link: https://...   # optional, same for url:\n' +
             '      - name: E2E Tests\n' +
             '        path: playwright-results/results.json');
     }
@@ -71,7 +79,7 @@ function formatDuration(ms) {
         return `${(ms / 1000).toFixed(1)}s`;
     return `${Math.round(ms)}ms`;
 }
-function aggregateToSuite(name, result) {
+function aggregateToSuite(name, result, options) {
     const passed = result.testSuites.reduce((sum, s) => sum + s.passed, 0);
     const failed = result.testSuites.reduce((sum, s) => sum + s.failed, 0);
     const skipped = result.testSuites.reduce((sum, s) => sum + (s.skipped ?? 0), 0);
@@ -83,6 +91,9 @@ function aggregateToSuite(name, result) {
         suite.skipped = skipped;
     if (totalMs > 0)
         suite.duration = formatDuration(totalMs);
+    if (options?.link && options.link.trim() !== '') {
+        suite.link = options.link.trim();
+    }
     return suite;
 }
 /**
@@ -93,7 +104,7 @@ async function parseNamedResultEntries(entries) {
     const testSuites = [];
     for (const entry of entries) {
         const result = await parseResultFile(entry.path);
-        testSuites.push(aggregateToSuite(entry.name, result));
+        testSuites.push(aggregateToSuite(entry.name, result, { link: entry.link }));
     }
     const totalPassed = testSuites.reduce((sum, s) => sum + s.passed, 0);
     const totalFailed = testSuites.reduce((sum, s) => sum + s.failed, 0);
