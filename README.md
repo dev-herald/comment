@@ -2,9 +2,9 @@
 
 Automated PR comments via [Dev Herald](https://dev-herald.com) - let workflows communicate with reviewers and teammates using simple markdown or rich templates. Templates built for CI/CD clarity: deploys, tests, table summaries, migration insights, and more.
 
-👉 [Docs](https://dev-herald.com/docs)
+[Docs](https://dev-herald.com/docs)
 
-👉 [Quick Start](https://dev-herald.com/docs/pr-comments/quick-start)
+[Quick Start](https://dev-herald.com/docs/pr-comments/quick-start)
 
 ---
 
