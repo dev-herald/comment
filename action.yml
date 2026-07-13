@@ -27,11 +27,11 @@ inputs:
       Optional per entry: link or url (HTTPS) — used as the suite name link in the table.
       Supported formats: Playwright JSON reporter, Vitest JSON reporter.
 
-      Example:
+      Example (use workflow expressions for link in your workflow YAML, not here):
         test-results: |
           - name: Unit Tests
             path: vitest-results/unit.json
-            link: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            link: https://github.com/owner/repo/actions/runs/12345678
           - name: E2E Tests
             path: playwright-results/results.json
     required: false
