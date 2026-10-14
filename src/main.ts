@@ -1,12 +1,62 @@
 import * as core from '@actions/core';
-import { getActionInputs, validateInputs, buildRequestConfig, resolveInputsForSignal } from './validation';
+import { getActionInputs, validateInputs, buildRequestConfig } from './validation';
 import { buildHeaders, makeHttpRequest } from './api';
 import { processResponse } from './output';
-import { parseTestResultsInput, parseNamedResultEntries } from './parsers/index';
-import { runDependencyDiffSignal } from './signals/dependency-diff';
-import { runTestResultsSignal } from './signals/test-results';
-import { runNewDependencySignal } from './signals/new-dependency';
-import { runBundleAnalysisSignal } from './signals/bundle-analysis';
+import { buildBulkComment } from './bulk-comment';
+import { parseSignalsInput } from './signals/parse-signals';
+import { executeSignal, loadParsedTestResults } from './signals/execute';
+import { formatTimestamp } from './signals/utils';
+import type { ParsedTestResults } from './parsers/types';
+import type { ActionInputs } from './types';
+
+/**
+ * Single-signal mode: one outcome becomes one template payload, one prose comment, or no post.
+ */
+async function applySingleSignal(inputs: ActionInputs, parsedTestResults?: ParsedTestResults): Promise<boolean> {
+  core.info(`📊 Running signal: ${inputs.signal}`);
+  const outcome = await executeSignal(inputs.signal, inputs, parsedTestResults);
+
+  if (outcome.action === 'skip') {
+    core.info(outcome.commentLog);
+    return false;
+  }
+
+  if (outcome.action === 'table') {
+    inputs.template = 'CUSTOM_TABLE';
+    inputs.templateData = JSON.stringify(outcome.data);
+    return true;
+  }
+
+  inputs.comment = outcome.markdown;
+  return true;
+}
+
+/**
+ * Bulk mode: render each section, join them, and post one plain comment.
+ * Returns false when every section was skipped.
+ */
+async function applyBulkSignals(inputs: ActionInputs, signals: string[]): Promise<boolean> {
+  const outcomes = [];
+
+  for (const signal of signals) {
+    core.info(`📊 Running signal: ${signal}`);
+    const outcome = await executeSignal(signal, inputs);
+    if (outcome.action === 'skip') {
+      core.info(outcome.sectionLog);
+    }
+    outcomes.push(outcome);
+  }
+
+  const comment = buildBulkComment(outcomes, formatTimestamp());
+  if (!comment) {
+    core.info('Skipping PR comment (every section was empty)');
+    return false;
+  }
+
+  inputs.comment = comment;
+  inputs.template = '';
+  return true;
+}
 
 /**
  * Main action entry point
@@ -21,77 +71,27 @@ async function run(): Promise<void> {
     validateInputs(inputs);
     core.info('✅ Input validation passed');
 
+    const signals = inputs.signals.trim().length > 0 ? parseSignalsInput(inputs.signals) : [];
+
     // ============================================================
-    // PHASE 1.5: PARSE TEST RESULTS FILES (if test-results set)
+    // PHASE 1.5: PARSE TEST RESULTS FILES (single-signal mode only)
+    // Bulk mode parses inside TEST_RESULTS so templateData is not overwritten.
     // ============================================================
-    if (inputs.testResults && inputs.testResults.trim().length > 0) {
-      core.info('📂 Parsing test results...');
-      const entries = parseTestResultsInput(inputs.testResults);
-      core.info(`📋 Found ${entries.length} named suite(s): ${entries.map((e) => e.name).join(', ')}`);
-      const parsed = await parseNamedResultEntries(entries);
-      inputs.templateData = JSON.stringify(parsed);
-      core.info(`✅ Parsed ${parsed.testSuites.length} test suite(s): ${parsed.summary}`);
+    let parsedTestResults: ParsedTestResults | undefined;
+    if (signals.length === 0 && inputs.testResults && inputs.testResults.trim().length > 0) {
+      parsedTestResults = await loadParsedTestResults(inputs.testResults);
+      inputs.templateData = JSON.stringify(parsedTestResults);
     }
 
     // ============================================================
-    // PHASE 1.7: RUN SIGNAL (if signal is set)
+    // PHASE 1.7: RUN SIGNAL OR SIGNALS
     // ============================================================
-    if (inputs.signal && inputs.signal.trim().length > 0) {
-      core.info(`📊 Running signal: ${inputs.signal}`);
-      const resolvedInputs = resolveInputsForSignal(inputs, inputs.signal);
-
-      if (inputs.signal === 'DEPENDENCY_DIFF') {
-        const result = await runDependencyDiffSignal(resolvedInputs);
-        if (!result.hasChanges) {
-          core.info('Skipping PR comment (no dependency changes)');
-          return;
-        }
-        inputs.template = 'CUSTOM_TABLE';
-        inputs.templateData = JSON.stringify(result.data);
-      } else if (inputs.signal === 'TEST_RESULTS') {
-        if (!inputs.testResults || inputs.testResults.trim().length === 0) {
-          throw new Error(
-            '❌ The TEST_RESULTS signal requires "test-results" to be set\n\n' +
-            '💡 Example:\n' +
-            '  with:\n' +
-            '    signal: "TEST_RESULTS"\n' +
-            '    test-results: |\n' +
-            '      - name: Unit Tests\n' +
-            '        path: vitest-results/results.json'
-          );
-        }
-        const parsedResults = JSON.parse(inputs.templateData);
-        const result = runTestResultsSignal(parsedResults);
-        if (result.hasResults) {
-          inputs.template = 'CUSTOM_TABLE';
-          inputs.templateData = JSON.stringify(result.data);
-        } else {
-          inputs.comment = result.noResultsComment ?? '';
-        }
-      } else if (inputs.signal === 'NEW_DEPENDENCY') {
-        const result = await runNewDependencySignal(resolvedInputs);
-        if (!result.hasChanges) {
-          core.info('Skipping PR comment (no new dependencies)');
-          return;
-        }
-        inputs.template = 'CUSTOM_TABLE';
-        inputs.templateData = JSON.stringify(result.data);
-      } else if (inputs.signal === 'BUNDLE_ANALYSIS') {
-        const result = await runBundleAnalysisSignal(resolvedInputs);
-        if (result.skip) {
-          core.info('Skipping PR comment (baseline not found)');
-          return;
-        }
-        if (result.hasChanges) {
-          inputs.template = 'CUSTOM_TABLE';
-          inputs.templateData = JSON.stringify(result.data);
-        } else {
-          inputs.comment = result.noChangesComment!;
-        }
-      } else {
-        // Unreachable: validateInputs() rejects unknown signals via signalTypeSchema
-        throw new Error(`❌ Unhandled signal: "${inputs.signal}"`);
-      }
+    if (signals.length > 0) {
+      const shouldPost = await applyBulkSignals(inputs, signals);
+      if (!shouldPost) return;
+    } else if (inputs.signal && inputs.signal.trim().length > 0) {
+      const shouldPost = await applySingleSignal(inputs, parsedTestResults);
+      if (!shouldPost) return;
     }
 
     // Build and validate request configuration

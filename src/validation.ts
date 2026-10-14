@@ -11,6 +11,11 @@ import {
   DEPLOYMENT_STATUS_IMGS
 } from '@dev-herald/constants';
 import type { ActionInputs, RequestConfig } from './types';
+import { signalTypeSchema } from './signal-type';
+import { parseSignalsInput } from './signals/parse-signals';
+
+export { signalTypeSchema };
+export type { SignalType } from './signal-type';
 
 // ============================================================================
 // Deployment Status Enum + Enhanced Schema
@@ -25,14 +30,6 @@ export const deploymentStatusSchema = z.enum(
   ['building', 'queued', 'success', 'failed'] satisfies Array<keyof typeof DEPLOYMENT_STATUS_IMGS>
 );
 export type DeploymentStatus = z.infer<typeof deploymentStatusSchema>;
-
-/**
- * Valid signal types.
- * Validated eagerly in validateInputs() so unknown signals fail with a Zod
- * "Allowed values" error before reaching the signal handler in main.ts.
- */
-export const signalTypeSchema = z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS', 'NEW_DEPENDENCY', 'BUNDLE_ANALYSIS']);
-export type SignalType = z.infer<typeof signalTypeSchema>;
 
 /**
  * Zod schemas that apply signal-specific defaults when inputs are empty.
@@ -97,6 +94,7 @@ const rawInputsSchema = z.object({
     .url({ error: 'API URL must be a valid HTTPS URL' })
     .startsWith('https://', { error: 'API URL must use HTTPS for security' }),
   signal: z.string(),
+  signals: z.string(),
   include: z.string(),
   enableCve: z.string(),
   maxDeps: z.string(),
@@ -231,6 +229,7 @@ export function getActionInputs(): ActionInputs {
     stickyId: core.getInput('sticky-id', { required: false }),
     apiUrl: core.getInput('api-url', { required: false }) || 'https://dev-herald.com/api/v1/github',
     signal: core.getInput('signal', { required: false }),
+    signals: core.getInput('signals', { required: false }),
     include: core.getInput('include', { required: false }),
     enableCve: core.getInput('enable-cve', { required: false }),
     maxDeps: core.getInput('max-deps', { required: false }),
@@ -257,6 +256,8 @@ export function validateInputs(inputs: ActionInputs): void {
 
   const hasTemplate = inputs.template.trim().length > 0;
   const hasSignal = inputs.signal.trim().length > 0;
+  const hasSignals = inputs.signals.trim().length > 0;
+  const hasComment = inputs.comment.trim().length > 0;
 
   if (hasTemplate && hasSignal) {
     throw new Error(
@@ -264,6 +265,13 @@ export function validateInputs(inputs: ActionInputs): void {
       '💡 Either use:\n' +
       '  - "template" + "template-data" for structured templates\n' +
       '  - "signal" for automatic signal-based comments (e.g. DEPENDENCY_DIFF, TEST_RESULTS)'
+    );
+  }
+
+  if (hasSignals && (hasSignal || hasTemplate || hasComment)) {
+    throw new Error(
+      '❌ Cannot combine "signals" with "signal", "template", or "comment"\n\n' +
+      '💡 Use "signals" to stack several sections into one comment, or use a single "signal", "template", or "comment".'
     );
   }
 
@@ -277,6 +285,8 @@ export function validateInputs(inputs: ActionInputs): void {
       throw error;
     }
   }
+
+  const parsedSignals = hasSignals ? parseSignalsInput(inputs.signals) : [];
 
   const signalOnlyInputs: Array<[string, string]> = [
     ['include', inputs.include],
@@ -293,9 +303,9 @@ export function validateInputs(inputs: ActionInputs): void {
     .filter(([, value]) => value.trim().length > 0)
     .map(([name]) => name);
 
-  if (!hasSignal && illegalInputs.length > 0) {
+  if (!hasSignal && !hasSignals && illegalInputs.length > 0) {
     throw new Error(
-      `❌ The following input(s) are only valid when "signal" is set: ${illegalInputs.map((n) => `"${n}"`).join(', ')}\n\n` +
+      `❌ The following input(s) are only valid when "signal" or "signals" is set: ${illegalInputs.map((n) => `"${n}"`).join(', ')}\n\n` +
       `💡 Add a signal (e.g. DEPENDENCY_DIFF, BUNDLE_ANALYSIS) to your workflow, or remove these inputs.`
     );
   }
@@ -308,7 +318,8 @@ export function validateInputs(inputs: ActionInputs): void {
     ['show-gzip', inputs.showGzip],
   ];
   const hasBundleInputs = bundleInputs.some(([, value]) => value.trim().length > 0);
-  if (hasBundleInputs && inputs.signal.trim() !== 'BUNDLE_ANALYSIS') {
+  const hasBundleSignal = inputs.signal.trim() === 'BUNDLE_ANALYSIS' || parsedSignals.includes('BUNDLE_ANALYSIS');
+  if (hasBundleInputs && !hasBundleSignal) {
     const provided = bundleInputs.filter(([, value]) => value.trim().length > 0).map(([name]) => name);
     throw new Error(
       `❌ The following input(s) require signal: BUNDLE_ANALYSIS: ${provided.map((n) => `"${n}"`).join(', ')}\n\n` +

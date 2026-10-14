@@ -160,3 +160,30 @@ jobs:
 ```
 
 **Next.js setup**: Add `@next/bundle-analyzer` and configure `next.config.js` with `analyzerMode: 'json'`. If no baseline exists yet, the action logs a message and skips posting.
+
+## Combined PR summary
+
+`signals` runs several signals in one step and posts one sticky comment. Section order follows the list. A dependency section with no changes is left out, and a missing bundle baseline leaves that section out. If every section is empty, the step does not post.
+
+`DEPENDENCY_DIFF` and `NEW_DEPENDENCY` can share this comment, or stay as separate steps with their own sticky ids.
+
+```yaml
+- name: Post PR summary
+  uses: dev-herald/comment@v1
+  with:
+    api-key: ${{ secrets.DEV_HERALD_API_KEY }}
+    pr-number: ${{ github.event.pull_request.number }}
+    sticky-id: pr-summary
+    signals: |
+      - DEPENDENCY_DIFF
+      - BUNDLE_ANALYSIS
+      - TEST_RESULTS
+    include: dependencies,devDependencies
+    enable-cve: 'true'
+    bundle-report-path: .next/analyze/
+    bundle-baseline-path: baseline/
+    test-results: |
+      - name: Unit Tests
+        path: vitest-results/results.json
+        link: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+```

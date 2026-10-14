@@ -60,6 +60,7 @@ export interface ActionInputs {
   stickyId: string;
   apiUrl: string;
   signal: string;
+  signals: string;
   include: string;
   enableCve: string;
   maxDeps: string;

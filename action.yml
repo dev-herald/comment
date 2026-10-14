@@ -36,7 +36,19 @@ inputs:
             path: playwright-results/results.json
     required: false
   signal:
-    description: 'Signal type to run. Supported: DEPENDENCY_DIFF, TEST_RESULTS, NEW_DEPENDENCY, BUNDLE_ANALYSIS. When set, the action computes the signal output and posts it automatically — no template or template-data required. Cannot be used together with "template".'
+    description: 'Signal type to run. Supported: DEPENDENCY_DIFF, TEST_RESULTS, NEW_DEPENDENCY, BUNDLE_ANALYSIS. When set, the action computes the signal output and posts it automatically — no template or template-data required. Cannot be used together with "template" or "signals".'
+    required: false
+  signals:
+    description: |
+      YAML list of signals to run in one step. Each section is rendered to markdown and posted as a single comment (one sticky-id). Order in the list is the order of sections. A section with nothing to report is omitted; if every section is empty, nothing is posted.
+      Supported: DEPENDENCY_DIFF, TEST_RESULTS, NEW_DEPENDENCY, BUNDLE_ANALYSIS.
+      Cannot be used together with "signal", "template", or "comment".
+
+      Example:
+        signals: |
+          - DEPENDENCY_DIFF
+          - BUNDLE_ANALYSIS
+          - TEST_RESULTS
     required: false
   bundle-report-path:
     description: 'Path to PR bundle analysis JSON directory (required for BUNDLE_ANALYSIS). Example: .next/analyze/'
@@ -54,13 +66,13 @@ inputs:
     description: 'Include gzip size delta in bundle diff (BUNDLE_ANALYSIS only). Default: false'
     required: false
   include:
-    description: 'Comma-separated list of dependency fields to scan for DEPENDENCY_DIFF. Default: dependencies,devDependencies,optionalDependencies (only used when signal is set)'
+    description: 'Comma-separated list of dependency fields to scan for DEPENDENCY_DIFF. Default: dependencies,devDependencies,optionalDependencies (only used when signal or signals is set)'
     required: false
   enable-cve:
-    description: 'Set to "true" to query the OSV database for CVE counts per dependency version (DEPENDENCY_DIFF only). Default: false (only used when signal is set)'
+    description: 'Set to "true" to query the OSV database for CVE counts per dependency version (DEPENDENCY_DIFF only). Default: false (only used when signal or signals is set)'
     required: false
   max-deps:
-    description: 'Maximum number of dependency changes to show in the DEPENDENCY_DIFF table. Default: 25 (only used when signal is set)'
+    description: 'Maximum number of dependency changes to show in the DEPENDENCY_DIFF table. Default: 25 (only used when signal or signals is set)'
     required: false
   sticky-id:
     description: 'Optional identifier for updateable comments. Comments with the same sticky-id will update instead of creating new ones. Example: "deployment-status"'

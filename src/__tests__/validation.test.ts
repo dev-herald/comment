@@ -31,6 +31,7 @@ function makeDeploymentInputs(overrides: Partial<ActionInputs> = {}): ActionInpu
     stickyId: '',
     apiUrl: BASE_URL,
     signal: '',
+    signals: '',
     include: '',
     enableCve: '',
     maxDeps: '',
@@ -337,6 +338,7 @@ describe('validateInputs', () => {
       stickyId: '',
       apiUrl: BASE_URL,
       signal: '',
+      signals: '',
       include: '',
       enableCve: '',
       maxDeps: '',
@@ -429,6 +431,73 @@ describe('validateInputs', () => {
     expect(() =>
       validateInputs(makeRawInputs({ signal: 'TEST_RESULTS' }))
     ).not.toThrow();
+  });
+
+  it('throws when "signals" is combined with "signal"', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({
+        signal: 'DEPENDENCY_DIFF',
+        signals: '- BUNDLE_ANALYSIS',
+      }))
+    ).toThrow(/Cannot combine "signals"/);
+  });
+
+  it('throws when "signals" is combined with "template"', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({
+        template: 'DEPLOYMENT',
+        signals: '- TEST_RESULTS',
+      }))
+    ).toThrow(/Cannot combine "signals"/);
+  });
+
+  it('throws when "signals" is combined with "comment"', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({
+        comment: 'Hello',
+        signals: '- TEST_RESULTS',
+      }))
+    ).toThrow(/Cannot combine "signals"/);
+  });
+
+  it('does not throw when bundle inputs are set and signals includes BUNDLE_ANALYSIS', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({
+        signals: '- DEPENDENCY_DIFF\n- BUNDLE_ANALYSIS',
+        bundleReportPath: '.next/analyze/',
+        bundleBaselinePath: 'baseline/',
+        include: 'dependencies',
+      }))
+    ).not.toThrow();
+  });
+
+  it('throws when bundle inputs are set and signals does not include BUNDLE_ANALYSIS', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({
+        signals: '- DEPENDENCY_DIFF',
+        bundleReportPath: '.next/analyze/',
+      }))
+    ).toThrow(/BUNDLE_ANALYSIS/);
+  });
+
+  it('throws when "signals" is an empty list', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({ signals: '   \n# nothing' }))
+    ).toThrow(/Could not parse any signals/);
+  });
+
+  it('throws when "signals" contains an unknown name', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({ signals: '- NOT_A_SIGNAL' }))
+    ).toThrow(/Unknown signal "NOT_A_SIGNAL"/);
+  });
+
+  it('throws when "signals" lists the same signal twice', () => {
+    expect(() =>
+      validateInputs(makeRawInputs({
+        signals: '- DEPENDENCY_DIFF\n- DEPENDENCY_DIFF',
+      }))
+    ).toThrow(/Duplicate signal "DEPENDENCY_DIFF"/);
   });
 });
 
