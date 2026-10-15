@@ -30116,6 +30116,65 @@ function buildHeaders(apiKey) {
 
 /***/ }),
 
+/***/ 252:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.renderCustomTable = renderCustomTable;
+exports.stripUpdatedFooter = stripUpdatedFooter;
+exports.buildBulkComment = buildBulkComment;
+/** Trailing timestamp the bundle "no changes" string already includes. */
+const UPDATED_FOOTER = /\n*<sub>Updated [\s\S]*?<\/sub>\s*$/;
+function escapeCell(value) {
+    return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+}
+/**
+ * Renders a CUSTOM_TABLE payload as a markdown section.
+ * showTimestamp is ignored — bulk comments add one footer for the whole body.
+ */
+function renderCustomTable(data) {
+    const title = typeof data.title === 'string' ? data.title : '';
+    const headers = Array.isArray(data.headers) ? data.headers.map((header) => String(header)) : [];
+    const rows = Array.isArray(data.rows) ? data.rows : [];
+    const headerLine = `| ${headers.map((header) => escapeCell(header)).join(' | ')} |`;
+    const separator = `| ${headers.map(() => '---').join(' | ')} |`;
+    const body = rows.map((row) => {
+        const cells = Array.isArray(row.cells) ? row.cells : [];
+        return `| ${cells.map((cell) => escapeCell(cell.markdown ?? '')).join(' | ')} |`;
+    });
+    return [`## ${title}`, '', headerLine, separator, ...body].join('\n');
+}
+/** Drops a trailing `<sub>Updated ...</sub>` so the bulk comment can add one footer. */
+function stripUpdatedFooter(markdown) {
+    return markdown.replace(UPDATED_FOOTER, '').trimEnd();
+}
+/**
+ * Joins rendered sections with a single timestamp footer.
+ * Returns null when every section was skipped, so the caller does not post.
+ */
+function buildBulkComment(outcomes, timestamp) {
+    const sections = [];
+    for (const outcome of outcomes) {
+        if (outcome.action === 'skip')
+            continue;
+        if (outcome.action === 'table') {
+            sections.push(renderCustomTable(outcome.data));
+            continue;
+        }
+        const prose = stripUpdatedFooter(outcome.markdown).trim();
+        if (prose)
+            sections.push(prose);
+    }
+    if (sections.length === 0)
+        return null;
+    return `${sections.join('\n\n')}\n\n<sub>Updated ${timestamp}</sub>`;
+}
+
+
+/***/ }),
+
 /***/ 7353:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -30159,11 +30218,51 @@ const core = __importStar(__nccwpck_require__(6966));
 const validation_1 = __nccwpck_require__(8659);
 const api_1 = __nccwpck_require__(7822);
 const output_1 = __nccwpck_require__(1957);
-const index_1 = __nccwpck_require__(1961);
-const dependency_diff_1 = __nccwpck_require__(7079);
-const test_results_1 = __nccwpck_require__(3069);
-const new_dependency_1 = __nccwpck_require__(4118);
-const bundle_analysis_1 = __nccwpck_require__(1282);
+const bulk_comment_1 = __nccwpck_require__(252);
+const parse_signals_1 = __nccwpck_require__(9075);
+const execute_1 = __nccwpck_require__(2927);
+const utils_1 = __nccwpck_require__(1229);
+/**
+ * Single-signal mode: one outcome becomes one template payload, one prose comment, or no post.
+ */
+async function applySingleSignal(inputs, parsedTestResults) {
+    core.info(`📊 Running signal: ${inputs.signal}`);
+    const outcome = await (0, execute_1.executeSignal)(inputs.signal, inputs, parsedTestResults);
+    if (outcome.action === 'skip') {
+        core.info(outcome.commentLog);
+        return false;
+    }
+    if (outcome.action === 'table') {
+        inputs.template = 'CUSTOM_TABLE';
+        inputs.templateData = JSON.stringify(outcome.data);
+        return true;
+    }
+    inputs.comment = outcome.markdown;
+    return true;
+}
+/**
+ * Bulk mode: render each section, join them, and post one plain comment.
+ * Returns false when every section was skipped.
+ */
+async function applyBulkSignals(inputs, signals) {
+    const outcomes = [];
+    for (const signal of signals) {
+        core.info(`📊 Running signal: ${signal}`);
+        const outcome = await (0, execute_1.executeSignal)(signal, inputs);
+        if (outcome.action === 'skip') {
+            core.info(outcome.sectionLog);
+        }
+        outcomes.push(outcome);
+    }
+    const comment = (0, bulk_comment_1.buildBulkComment)(outcomes, (0, utils_1.formatTimestamp)());
+    if (!comment) {
+        core.info('Skipping PR comment (every section was empty)');
+        return false;
+    }
+    inputs.comment = comment;
+    inputs.template = '';
+    return true;
+}
 /**
  * Main action entry point
  */
@@ -30176,79 +30275,28 @@ async function run() {
         const inputs = (0, validation_1.getActionInputs)();
         (0, validation_1.validateInputs)(inputs);
         core.info('✅ Input validation passed');
+        const signals = inputs.signals.trim().length > 0 ? (0, parse_signals_1.parseSignalsInput)(inputs.signals) : [];
         // ============================================================
-        // PHASE 1.5: PARSE TEST RESULTS FILES (if test-results set)
+        // PHASE 1.5: PARSE TEST RESULTS FILES (single-signal mode only)
+        // Bulk mode parses inside TEST_RESULTS so templateData is not overwritten.
         // ============================================================
-        if (inputs.testResults && inputs.testResults.trim().length > 0) {
-            core.info('📂 Parsing test results...');
-            const entries = (0, index_1.parseTestResultsInput)(inputs.testResults);
-            core.info(`📋 Found ${entries.length} named suite(s): ${entries.map((e) => e.name).join(', ')}`);
-            const parsed = await (0, index_1.parseNamedResultEntries)(entries);
-            inputs.templateData = JSON.stringify(parsed);
-            core.info(`✅ Parsed ${parsed.testSuites.length} test suite(s): ${parsed.summary}`);
+        let parsedTestResults;
+        if (signals.length === 0 && inputs.testResults && inputs.testResults.trim().length > 0) {
+            parsedTestResults = await (0, execute_1.loadParsedTestResults)(inputs.testResults);
+            inputs.templateData = JSON.stringify(parsedTestResults);
         }
         // ============================================================
-        // PHASE 1.7: RUN SIGNAL (if signal is set)
+        // PHASE 1.7: RUN SIGNAL OR SIGNALS
         // ============================================================
-        if (inputs.signal && inputs.signal.trim().length > 0) {
-            core.info(`📊 Running signal: ${inputs.signal}`);
-            const resolvedInputs = (0, validation_1.resolveInputsForSignal)(inputs, inputs.signal);
-            if (inputs.signal === 'DEPENDENCY_DIFF') {
-                const result = await (0, dependency_diff_1.runDependencyDiffSignal)(resolvedInputs);
-                if (!result.hasChanges) {
-                    core.info('Skipping PR comment (no dependency changes)');
-                    return;
-                }
-                inputs.template = 'CUSTOM_TABLE';
-                inputs.templateData = JSON.stringify(result.data);
-            }
-            else if (inputs.signal === 'TEST_RESULTS') {
-                if (!inputs.testResults || inputs.testResults.trim().length === 0) {
-                    throw new Error('❌ The TEST_RESULTS signal requires "test-results" to be set\n\n' +
-                        '💡 Example:\n' +
-                        '  with:\n' +
-                        '    signal: "TEST_RESULTS"\n' +
-                        '    test-results: |\n' +
-                        '      - name: Unit Tests\n' +
-                        '        path: vitest-results/results.json');
-                }
-                const parsedResults = JSON.parse(inputs.templateData);
-                const result = (0, test_results_1.runTestResultsSignal)(parsedResults);
-                if (result.hasResults) {
-                    inputs.template = 'CUSTOM_TABLE';
-                    inputs.templateData = JSON.stringify(result.data);
-                }
-                else {
-                    inputs.comment = result.noResultsComment ?? '';
-                }
-            }
-            else if (inputs.signal === 'NEW_DEPENDENCY') {
-                const result = await (0, new_dependency_1.runNewDependencySignal)(resolvedInputs);
-                if (!result.hasChanges) {
-                    core.info('Skipping PR comment (no new dependencies)');
-                    return;
-                }
-                inputs.template = 'CUSTOM_TABLE';
-                inputs.templateData = JSON.stringify(result.data);
-            }
-            else if (inputs.signal === 'BUNDLE_ANALYSIS') {
-                const result = await (0, bundle_analysis_1.runBundleAnalysisSignal)(resolvedInputs);
-                if (result.skip) {
-                    core.info('Skipping PR comment (baseline not found)');
-                    return;
-                }
-                if (result.hasChanges) {
-                    inputs.template = 'CUSTOM_TABLE';
-                    inputs.templateData = JSON.stringify(result.data);
-                }
-                else {
-                    inputs.comment = result.noChangesComment;
-                }
-            }
-            else {
-                // Unreachable: validateInputs() rejects unknown signals via signalTypeSchema
-                throw new Error(`❌ Unhandled signal: "${inputs.signal}"`);
-            }
+        if (signals.length > 0) {
+            const shouldPost = await applyBulkSignals(inputs, signals);
+            if (!shouldPost)
+                return;
+        }
+        else if (inputs.signal && inputs.signal.trim().length > 0) {
+            const shouldPost = await applySingleSignal(inputs, parsedTestResults);
+            if (!shouldPost)
+                return;
         }
         // Build and validate request configuration
         const config = (0, validation_1.buildRequestConfig)(inputs);
@@ -30899,6 +30947,25 @@ function parseVitestReport(raw) {
 
 /***/ }),
 
+/***/ 7701:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.signalTypeSchema = exports.SIGNAL_TYPES = void 0;
+const zod_1 = __nccwpck_require__(8661);
+/**
+ * Valid signal types.
+ * Validated eagerly so unknown signals fail with an allowed-values error
+ * before a signal handler runs.
+ */
+exports.SIGNAL_TYPES = ['DEPENDENCY_DIFF', 'TEST_RESULTS', 'NEW_DEPENDENCY', 'BUNDLE_ANALYSIS'];
+exports.signalTypeSchema = zod_1.z.enum(exports.SIGNAL_TYPES);
+
+
+/***/ }),
+
 /***/ 9802:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -31510,6 +31577,133 @@ async function runDependencyDiffSignal(inputs) {
 
 /***/ }),
 
+/***/ 2927:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.loadParsedTestResults = loadParsedTestResults;
+exports.executeSignal = executeSignal;
+const core = __importStar(__nccwpck_require__(6966));
+const index_1 = __nccwpck_require__(1961);
+const validation_1 = __nccwpck_require__(8659);
+const dependency_diff_1 = __nccwpck_require__(7079);
+const test_results_1 = __nccwpck_require__(3069);
+const new_dependency_1 = __nccwpck_require__(4118);
+const bundle_analysis_1 = __nccwpck_require__(1282);
+/**
+ * Reads and parses the `test-results` YAML list.
+ */
+async function loadParsedTestResults(testResults) {
+    core.info('📂 Parsing test results...');
+    const entries = (0, index_1.parseTestResultsInput)(testResults);
+    core.info(`📋 Found ${entries.length} named suite(s): ${entries.map((e) => e.name).join(', ')}`);
+    const parsed = await (0, index_1.parseNamedResultEntries)(entries);
+    core.info(`✅ Parsed ${parsed.testSuites.length} test suite(s): ${parsed.summary}`);
+    return parsed;
+}
+function missingTestResultsError() {
+    return new Error('❌ The TEST_RESULTS signal requires "test-results" to be set\n\n' +
+        '💡 Example:\n' +
+        '  with:\n' +
+        '    signal: "TEST_RESULTS"\n' +
+        '    test-results: |\n' +
+        '      - name: Unit Tests\n' +
+        '        path: vitest-results/results.json');
+}
+/**
+ * Runs one signal and returns whether to skip it, render a table, or include prose.
+ * Single-signal mode and bulk mode share this so skip rules stay in one place.
+ */
+async function executeSignal(signal, inputs, parsedTestResults) {
+    const resolvedInputs = (0, validation_1.resolveInputsForSignal)(inputs, signal);
+    if (signal === 'DEPENDENCY_DIFF') {
+        const result = await (0, dependency_diff_1.runDependencyDiffSignal)(resolvedInputs);
+        if (!result.hasChanges) {
+            return {
+                action: 'skip',
+                commentLog: 'Skipping PR comment (no dependency changes)',
+                sectionLog: 'Omitting DEPENDENCY_DIFF (no dependency changes)',
+            };
+        }
+        return { action: 'table', data: result.data ?? {} };
+    }
+    if (signal === 'TEST_RESULTS') {
+        if (!inputs.testResults || inputs.testResults.trim().length === 0) {
+            throw missingTestResultsError();
+        }
+        const parsed = parsedTestResults ?? await loadParsedTestResults(inputs.testResults);
+        const result = (0, test_results_1.runTestResultsSignal)(parsed);
+        if (result.hasResults) {
+            return { action: 'table', data: result.data ?? {} };
+        }
+        return { action: 'comment', markdown: result.noResultsComment ?? '' };
+    }
+    if (signal === 'NEW_DEPENDENCY') {
+        const result = await (0, new_dependency_1.runNewDependencySignal)(resolvedInputs);
+        if (!result.hasChanges) {
+            return {
+                action: 'skip',
+                commentLog: 'Skipping PR comment (no new dependencies)',
+                sectionLog: 'Omitting NEW_DEPENDENCY (no new dependencies)',
+            };
+        }
+        return { action: 'table', data: result.data ?? {} };
+    }
+    if (signal === 'BUNDLE_ANALYSIS') {
+        const result = await (0, bundle_analysis_1.runBundleAnalysisSignal)(resolvedInputs);
+        if (result.skip) {
+            return {
+                action: 'skip',
+                commentLog: 'Skipping PR comment (baseline not found)',
+                sectionLog: 'Omitting BUNDLE_ANALYSIS (baseline not found)',
+            };
+        }
+        if (result.hasChanges) {
+            return { action: 'table', data: result.data ?? {} };
+        }
+        return { action: 'comment', markdown: result.noChangesComment ?? '' };
+    }
+    throw new Error(`❌ Unhandled signal: "${signal}"`);
+}
+
+
+/***/ }),
+
 /***/ 4118:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -31793,6 +31987,77 @@ async function runNewDependencySignal(inputs) {
 
 /***/ }),
 
+/***/ 9075:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseSignalsInput = parseSignalsInput;
+const signal_type_1 = __nccwpck_require__(7701);
+function unquote(raw) {
+    const trimmed = raw.trim();
+    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+        (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+        return trimmed.slice(1, -1).trim();
+    }
+    return trimmed;
+}
+/**
+ * Parses the YAML-like `signals` input into an ordered list of signal names.
+ *
+ * Expected format:
+ * ```yaml
+ * signals: |
+ *   - DEPENDENCY_DIFF
+ *   - BUNDLE_ANALYSIS
+ *   - TEST_RESULTS
+ * ```
+ */
+function parseSignalsInput(input) {
+    const names = [];
+    for (const line of input.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#'))
+            continue;
+        const raw = trimmed.startsWith('- ')
+            ? trimmed.slice(2)
+            : trimmed.replace(/^-/, '');
+        const name = unquote(raw);
+        if (!name)
+            continue;
+        names.push(name);
+    }
+    if (names.length === 0) {
+        throw new Error('❌ Could not parse any signals from "signals" input.\n\n' +
+            '💡 Expected format:\n' +
+            '    signals: |\n' +
+            '      - DEPENDENCY_DIFF\n' +
+            '      - BUNDLE_ANALYSIS\n' +
+            '      - TEST_RESULTS');
+    }
+    const parsed = [];
+    for (const name of names) {
+        const result = signal_type_1.signalTypeSchema.safeParse(name);
+        if (!result.success) {
+            throw new Error(`❌ Unknown signal "${name}".\n\n` +
+                `💡 Allowed values: ${signal_type_1.SIGNAL_TYPES.join(', ')}`);
+        }
+        parsed.push(result.data);
+    }
+    const seen = new Set();
+    for (const name of parsed) {
+        if (seen.has(name)) {
+            throw new Error(`❌ Duplicate signal "${name}" in "signals". Each signal can only appear once.`);
+        }
+        seen.add(name);
+    }
+    return parsed;
+}
+
+
+/***/ }),
+
 /***/ 3069:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -32030,7 +32295,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.activeTemplateTypeSchema = exports.signalTypeSchema = exports.deploymentStatusSchema = void 0;
+exports.activeTemplateTypeSchema = exports.deploymentStatusSchema = exports.signalTypeSchema = void 0;
 exports.formatZodError = formatZodError;
 exports.getActionInputs = getActionInputs;
 exports.validateInputs = validateInputs;
@@ -32039,6 +32304,9 @@ exports.buildRequestConfig = buildRequestConfig;
 const core = __importStar(__nccwpck_require__(6966));
 const zod_1 = __nccwpck_require__(8661);
 const constants_1 = __nccwpck_require__(6909);
+const signal_type_1 = __nccwpck_require__(7701);
+Object.defineProperty(exports, "signalTypeSchema", ({ enumerable: true, get: function () { return signal_type_1.signalTypeSchema; } }));
+const parse_signals_1 = __nccwpck_require__(9075);
 // ============================================================================
 // Deployment Status Enum + Enhanced Schema
 // ============================================================================
@@ -32048,12 +32316,6 @@ const constants_1 = __nccwpck_require__(6909);
  * compile time if this ever drifts out of sync with the constants package.
  */
 exports.deploymentStatusSchema = zod_1.z.enum(['building', 'queued', 'success', 'failed']);
-/**
- * Valid signal types.
- * Validated eagerly in validateInputs() so unknown signals fail with a Zod
- * "Allowed values" error before reaching the signal handler in main.ts.
- */
-exports.signalTypeSchema = zod_1.z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS', 'NEW_DEPENDENCY', 'BUNDLE_ANALYSIS']);
 /**
  * Zod schemas that apply signal-specific defaults when inputs are empty.
  * Used only when the corresponding signal is set — avoids YAML defaults
@@ -32110,6 +32372,7 @@ const rawInputsSchema = zod_1.z.object({
         .url({ error: 'API URL must be a valid HTTPS URL' })
         .startsWith('https://', { error: 'API URL must use HTTPS for security' }),
     signal: zod_1.z.string(),
+    signals: zod_1.z.string(),
     include: zod_1.z.string(),
     enableCve: zod_1.z.string(),
     maxDeps: zod_1.z.string(),
@@ -32237,6 +32500,7 @@ function getActionInputs() {
         stickyId: core.getInput('sticky-id', { required: false }),
         apiUrl: core.getInput('api-url', { required: false }) || 'https://dev-herald.com/api/v1/github',
         signal: core.getInput('signal', { required: false }),
+        signals: core.getInput('signals', { required: false }),
         include: core.getInput('include', { required: false }),
         enableCve: core.getInput('enable-cve', { required: false }),
         maxDeps: core.getInput('max-deps', { required: false }),
@@ -32262,15 +32526,21 @@ function validateInputs(inputs) {
     }
     const hasTemplate = inputs.template.trim().length > 0;
     const hasSignal = inputs.signal.trim().length > 0;
+    const hasSignals = inputs.signals.trim().length > 0;
+    const hasComment = inputs.comment.trim().length > 0;
     if (hasTemplate && hasSignal) {
         throw new Error('❌ Cannot provide both "template" and "signal" — choose one mode\n\n' +
             '💡 Either use:\n' +
             '  - "template" + "template-data" for structured templates\n' +
             '  - "signal" for automatic signal-based comments (e.g. DEPENDENCY_DIFF, TEST_RESULTS)');
     }
+    if (hasSignals && (hasSignal || hasTemplate || hasComment)) {
+        throw new Error('❌ Cannot combine "signals" with "signal", "template", or "comment"\n\n' +
+            '💡 Use "signals" to stack several sections into one comment, or use a single "signal", "template", or "comment".');
+    }
     if (hasSignal) {
         try {
-            exports.signalTypeSchema.parse(inputs.signal.trim());
+            signal_type_1.signalTypeSchema.parse(inputs.signal.trim());
         }
         catch (error) {
             if (error instanceof zod_1.z.ZodError) {
@@ -32279,6 +32549,7 @@ function validateInputs(inputs) {
             throw error;
         }
     }
+    const parsedSignals = hasSignals ? (0, parse_signals_1.parseSignalsInput)(inputs.signals) : [];
     const signalOnlyInputs = [
         ['include', inputs.include],
         ['enable-cve', inputs.enableCve],
@@ -32292,8 +32563,8 @@ function validateInputs(inputs) {
     const illegalInputs = signalOnlyInputs
         .filter(([, value]) => value.trim().length > 0)
         .map(([name]) => name);
-    if (!hasSignal && illegalInputs.length > 0) {
-        throw new Error(`❌ The following input(s) are only valid when "signal" is set: ${illegalInputs.map((n) => `"${n}"`).join(', ')}\n\n` +
+    if (!hasSignal && !hasSignals && illegalInputs.length > 0) {
+        throw new Error(`❌ The following input(s) are only valid when "signal" or "signals" is set: ${illegalInputs.map((n) => `"${n}"`).join(', ')}\n\n` +
             `💡 Add a signal (e.g. DEPENDENCY_DIFF, BUNDLE_ANALYSIS) to your workflow, or remove these inputs.`);
     }
     const bundleInputs = [
@@ -32304,7 +32575,8 @@ function validateInputs(inputs) {
         ['show-gzip', inputs.showGzip],
     ];
     const hasBundleInputs = bundleInputs.some(([, value]) => value.trim().length > 0);
-    if (hasBundleInputs && inputs.signal.trim() !== 'BUNDLE_ANALYSIS') {
+    const hasBundleSignal = inputs.signal.trim() === 'BUNDLE_ANALYSIS' || parsedSignals.includes('BUNDLE_ANALYSIS');
+    if (hasBundleInputs && !hasBundleSignal) {
         const provided = bundleInputs.filter(([, value]) => value.trim().length > 0).map(([name]) => name);
         throw new Error(`❌ The following input(s) require signal: BUNDLE_ANALYSIS: ${provided.map((n) => `"${n}"`).join(', ')}\n\n` +
             `💡 Add signal: BUNDLE_ANALYSIS to your workflow, or remove these inputs.`);

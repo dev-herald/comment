@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.activeTemplateTypeSchema = exports.signalTypeSchema = exports.deploymentStatusSchema = void 0;
+exports.activeTemplateTypeSchema = exports.deploymentStatusSchema = exports.signalTypeSchema = void 0;
 exports.formatZodError = formatZodError;
 exports.getActionInputs = getActionInputs;
 exports.validateInputs = validateInputs;
@@ -42,6 +42,9 @@ exports.buildRequestConfig = buildRequestConfig;
 const core = __importStar(require("@actions/core"));
 const zod_1 = require("zod");
 const constants_1 = require("@dev-herald/constants");
+const signal_type_1 = require("./signal-type");
+Object.defineProperty(exports, "signalTypeSchema", { enumerable: true, get: function () { return signal_type_1.signalTypeSchema; } });
+const parse_signals_1 = require("./signals/parse-signals");
 // ============================================================================
 // Deployment Status Enum + Enhanced Schema
 // ============================================================================
@@ -51,12 +54,6 @@ const constants_1 = require("@dev-herald/constants");
  * compile time if this ever drifts out of sync with the constants package.
  */
 exports.deploymentStatusSchema = zod_1.z.enum(['building', 'queued', 'success', 'failed']);
-/**
- * Valid signal types.
- * Validated eagerly in validateInputs() so unknown signals fail with a Zod
- * "Allowed values" error before reaching the signal handler in main.ts.
- */
-exports.signalTypeSchema = zod_1.z.enum(['DEPENDENCY_DIFF', 'TEST_RESULTS', 'NEW_DEPENDENCY', 'BUNDLE_ANALYSIS']);
 /**
  * Zod schemas that apply signal-specific defaults when inputs are empty.
  * Used only when the corresponding signal is set — avoids YAML defaults
@@ -113,6 +110,7 @@ const rawInputsSchema = zod_1.z.object({
         .url({ error: 'API URL must be a valid HTTPS URL' })
         .startsWith('https://', { error: 'API URL must use HTTPS for security' }),
     signal: zod_1.z.string(),
+    signals: zod_1.z.string(),
     include: zod_1.z.string(),
     enableCve: zod_1.z.string(),
     maxDeps: zod_1.z.string(),
@@ -240,6 +238,7 @@ function getActionInputs() {
         stickyId: core.getInput('sticky-id', { required: false }),
         apiUrl: core.getInput('api-url', { required: false }) || 'https://dev-herald.com/api/v1/github',
         signal: core.getInput('signal', { required: false }),
+        signals: core.getInput('signals', { required: false }),
         include: core.getInput('include', { required: false }),
         enableCve: core.getInput('enable-cve', { required: false }),
         maxDeps: core.getInput('max-deps', { required: false }),
@@ -265,15 +264,21 @@ function validateInputs(inputs) {
     }
     const hasTemplate = inputs.template.trim().length > 0;
     const hasSignal = inputs.signal.trim().length > 0;
+    const hasSignals = inputs.signals.trim().length > 0;
+    const hasComment = inputs.comment.trim().length > 0;
     if (hasTemplate && hasSignal) {
         throw new Error('❌ Cannot provide both "template" and "signal" — choose one mode\n\n' +
             '💡 Either use:\n' +
             '  - "template" + "template-data" for structured templates\n' +
             '  - "signal" for automatic signal-based comments (e.g. DEPENDENCY_DIFF, TEST_RESULTS)');
     }
+    if (hasSignals && (hasSignal || hasTemplate || hasComment)) {
+        throw new Error('❌ Cannot combine "signals" with "signal", "template", or "comment"\n\n' +
+            '💡 Use "signals" to stack several sections into one comment, or use a single "signal", "template", or "comment".');
+    }
     if (hasSignal) {
         try {
-            exports.signalTypeSchema.parse(inputs.signal.trim());
+            signal_type_1.signalTypeSchema.parse(inputs.signal.trim());
         }
         catch (error) {
             if (error instanceof zod_1.z.ZodError) {
@@ -282,6 +287,7 @@ function validateInputs(inputs) {
             throw error;
         }
     }
+    const parsedSignals = hasSignals ? (0, parse_signals_1.parseSignalsInput)(inputs.signals) : [];
     const signalOnlyInputs = [
         ['include', inputs.include],
         ['enable-cve', inputs.enableCve],
@@ -295,8 +301,8 @@ function validateInputs(inputs) {
     const illegalInputs = signalOnlyInputs
         .filter(([, value]) => value.trim().length > 0)
         .map(([name]) => name);
-    if (!hasSignal && illegalInputs.length > 0) {
-        throw new Error(`❌ The following input(s) are only valid when "signal" is set: ${illegalInputs.map((n) => `"${n}"`).join(', ')}\n\n` +
+    if (!hasSignal && !hasSignals && illegalInputs.length > 0) {
+        throw new Error(`❌ The following input(s) are only valid when "signal" or "signals" is set: ${illegalInputs.map((n) => `"${n}"`).join(', ')}\n\n` +
             `💡 Add a signal (e.g. DEPENDENCY_DIFF, BUNDLE_ANALYSIS) to your workflow, or remove these inputs.`);
     }
     const bundleInputs = [
@@ -307,7 +313,8 @@ function validateInputs(inputs) {
         ['show-gzip', inputs.showGzip],
     ];
     const hasBundleInputs = bundleInputs.some(([, value]) => value.trim().length > 0);
-    if (hasBundleInputs && inputs.signal.trim() !== 'BUNDLE_ANALYSIS') {
+    const hasBundleSignal = inputs.signal.trim() === 'BUNDLE_ANALYSIS' || parsedSignals.includes('BUNDLE_ANALYSIS');
+    if (hasBundleInputs && !hasBundleSignal) {
         const provided = bundleInputs.filter(([, value]) => value.trim().length > 0).map(([name]) => name);
         throw new Error(`❌ The following input(s) require signal: BUNDLE_ANALYSIS: ${provided.map((n) => `"${n}"`).join(', ')}\n\n` +
             `💡 Add signal: BUNDLE_ANALYSIS to your workflow, or remove these inputs.`);
