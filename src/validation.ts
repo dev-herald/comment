@@ -6,7 +6,7 @@ import {
   simpleCommentSchema,
   templateTypeSchema,
   deploymentTemplateSchema,
-  migrationTemplateSchema,
+  initiativeTemplateSchema,
   customTableTemplateSchema,
   DEPLOYMENT_STATUS_IMGS
 } from '@dev-herald/constants';
@@ -190,14 +190,43 @@ export function formatZodError(error: z.ZodError): string {
 /**
  * Validates template-specific data based on template type
  */
+const RESERVED_INITIATIVE_FIELDS = ['before', 'after', 'delta', 'timestamp', 'commitSha'] as const;
+
+/**
+ * The server owns comparison fields. They must not be posted with INITIATIVE counts.
+ */
+function rejectReservedInitiativeFields(value: unknown): void {
+  if (value === null || typeof value !== 'object') return;
+
+  const entries = Array.isArray(value) ? value.entries() : Object.entries(value as Record<string, unknown>);
+  for (const [key, child] of entries) {
+    if (typeof key === 'string' && (RESERVED_INITIATIVE_FIELDS as readonly string[]).includes(key)) {
+      throw new Error(
+        `Invalid data for INITIATIVE template:\nDo not send "${key}". Send current metric counts only.`
+      );
+    }
+    rejectReservedInitiativeFields(child);
+  }
+}
+
 function validateTemplateData(template: string, data: any): any {
   const sanitised = stripEmptyStrings(data as Record<string, unknown>);
   try {
     switch (template) {
       case 'DEPLOYMENT':
         return deploymentSchema.parse(sanitised);
-      case 'MIGRATION':
-        return migrationTemplateSchema.parse(sanitised);
+      case 'INITIATIVE': {
+        rejectReservedInitiativeFields(sanitised);
+        const parsed = initiativeTemplateSchema.parse(sanitised);
+        for (const [slug, metrics] of Object.entries(parsed.initiatives)) {
+          if (Object.keys(metrics).length === 0) {
+            throw new Error(
+              `Invalid data for INITIATIVE template:\nInitiative "${slug}" must include at least one metric`
+            );
+          }
+        }
+        return parsed;
+      }
       case 'CUSTOM_TABLE':
         return customTableTemplateSchema.parse(sanitised);
       default:
@@ -399,6 +428,17 @@ export function buildRequestConfig(inputs: ActionInputs): RequestConfig {
         '    test-results: |\n' +
         '      - name: Unit Tests\n' +
         '        path: vitest-results/results.json'
+      );
+    }
+
+    if (inputs.template === 'MIGRATION') {
+      throw new Error(
+        '❌ The MIGRATION template is no longer accepted. Send current initiative counts with the INITIATIVE template:\n\n' +
+        '💡 Replace:\n' +
+        '    template: "MIGRATION"\n\n' +
+        '  With:\n' +
+        '    template: "INITIATIVE"\n' +
+        '    template-data: \'{"initiatives":{"emotion-to-panda":{"files":10,"usages":80}}}\''
       );
     }
 

@@ -4,6 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('@actions/core');
 
 import { buildRequestConfig, validateInputs } from '../validation';
+import { SIGNAL_TYPES } from '../signal-type';
 import type { ActionInputs, TemplateCommentRequest } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -157,6 +158,115 @@ describe('buildRequestConfig – CUSTOM_TABLE template', () => {
     };
     expect(data.rows[0].cells[0].markdown).toBe('[label](https://example.com)');
     expect(data.rows[0].cells[1].markdown).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// INITIATIVE template
+// ---------------------------------------------------------------------------
+
+describe('buildRequestConfig – INITIATIVE template', () => {
+  function initiativeInputs(overrides: Partial<ActionInputs> = {}): ActionInputs {
+    return makeDeploymentInputs({
+      template: 'INITIATIVE',
+      templateData: JSON.stringify({
+        initiatives: {
+          'emotion-to-panda': { files: 10, usages: 80 },
+        },
+      }),
+      ...overrides,
+    });
+  }
+
+  it('posts current counts to the template endpoint', () => {
+    const config = buildRequestConfig(initiativeInputs());
+
+    expect(config.mode).toBe('template');
+    expect(config.endpoint).toBe(`${BASE_URL}/comment/template`);
+    const body = config.requestBody as TemplateCommentRequest;
+    expect(body.template).toBe('INITIATIVE');
+    expect(body.prNumber).toBe(42);
+    expect(body.stickyId).toBeUndefined();
+    expect(body.data).toEqual({
+      initiatives: {
+        'emotion-to-panda': { files: 10, usages: 80 },
+      },
+    });
+    expect(body.data).not.toHaveProperty('before');
+    expect(body.data).not.toHaveProperty('after');
+    expect(body.data).not.toHaveProperty('delta');
+    expect(body.data).not.toHaveProperty('timestamp');
+    expect(body.data).not.toHaveProperty('commitSha');
+    expect(body.data).not.toHaveProperty('showTimestamp');
+  });
+
+  it('includes stickyId only when sticky-id is set', () => {
+    const withSticky = buildRequestConfig(initiativeInputs({ stickyId: 'initiatives' }));
+    expect((withSticky.requestBody as TemplateCommentRequest).stickyId).toBe('initiatives');
+
+    const withoutSticky = buildRequestConfig(initiativeInputs({ stickyId: '   ' }));
+    expect((withoutSticky.requestBody as TemplateCommentRequest).stickyId).toBeUndefined();
+  });
+
+  it('rejects MIGRATION before a request body is built', () => {
+    const inputs = initiativeInputs({ template: 'MIGRATION' });
+    expect(() => buildRequestConfig(inputs)).toThrow(/MIGRATION template is no longer accepted/);
+    expect(() => buildRequestConfig(inputs)).toThrow(/template: "INITIATIVE"/);
+  });
+
+  it('rejects an empty initiatives object', () => {
+    const inputs = initiativeInputs({
+      templateData: JSON.stringify({ initiatives: {} }),
+    });
+    expect(() => buildRequestConfig(inputs)).toThrow(/at least one initiative/i);
+  });
+
+  it.each(['Emotion', 'a--b', `${'a'.repeat(81)}`])('rejects slug "%s"', (slug) => {
+    const inputs = initiativeInputs({
+      templateData: JSON.stringify({
+        initiatives: { [slug]: { files: 1 } },
+      }),
+    });
+    expect(() => buildRequestConfig(inputs)).toThrow();
+  });
+
+  it('rejects a non-finite metric', () => {
+    const inputs = initiativeInputs({
+      templateData: '{"initiatives":{"emotion-to-panda":{"files":1e309}}}',
+    });
+    expect(() => buildRequestConfig(inputs)).toThrow(/number/i);
+  });
+
+  it('rejects an empty metric map', () => {
+    const inputs = initiativeInputs({
+      templateData: JSON.stringify({
+        initiatives: { 'emotion-to-panda': {} },
+      }),
+    });
+    expect(() => buildRequestConfig(inputs)).toThrow(/at least one metric/);
+  });
+
+  it.each(['before', 'after', 'delta', 'timestamp', 'commitSha'] as const)(
+    'rejects reserved field "%s"',
+    (field) => {
+      const inputs = initiativeInputs({
+        templateData: JSON.stringify({
+          initiatives: { 'emotion-to-panda': { files: 10, [field]: 1 } },
+        }),
+      });
+      expect(() => buildRequestConfig(inputs)).toThrow(new RegExp(`Do not send "${field}"`));
+    }
+  );
+});
+
+describe('signals', () => {
+  it('does not add an INITIATIVE signal', () => {
+    expect(SIGNAL_TYPES).toEqual([
+      'DEPENDENCY_DIFF',
+      'TEST_RESULTS',
+      'NEW_DEPENDENCY',
+      'BUNDLE_ANALYSIS',
+    ]);
   });
 });
 

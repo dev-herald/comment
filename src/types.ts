@@ -10,7 +10,7 @@ export interface SimpleCommentRequest {
 
 export interface TemplateCommentRequest {
   prNumber: number;
-  template: 'DEPLOYMENT' | 'MIGRATION' | 'CUSTOM_TABLE';
+  template: 'DEPLOYMENT' | 'INITIATIVE' | 'CUSTOM_TABLE';
   data: any;
   stickyId?: string;
 }

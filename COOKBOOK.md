@@ -20,23 +20,22 @@ Copy-paste examples for the [Dev Herald](https://dev-herald.com) `comment` actio
     sticky-id: 'deployment'
 ```
 
-## Migration Template
+## Initiative Template
 
 ```yaml
-- name: Post migration summary
+- name: Post initiative counts
   uses: dev-herald/comment@v1
   with:
     api-key: ${{ secrets.DEV_HERALD_API_KEY }}
     pr-number: ${{ github.event.pull_request.number }}
-    template: 'MIGRATION'
+    template: 'INITIATIVE'
     template-data: |
       {
-        "migrations": [
-          { "name": "20240101_add_users_table", "status": "pending" },
-          { "name": "20240102_add_posts_table", "status": "pending" }
-        ]
+        "initiatives": {
+          "emotion-to-panda": { "files": 10, "usages": 80 }
+        }
       }
-    sticky-id: 'migration'
+    sticky-id: 'initiatives'
 ```
 
 ## Dependency Diff Signal
