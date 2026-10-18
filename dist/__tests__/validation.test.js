@@ -27,6 +27,7 @@ function makeDeploymentInputs(overrides = {}) {
         stickyId: '',
         apiUrl: BASE_URL,
         signal: '',
+        signals: '',
         include: '',
         enableCve: '',
         maxDeps: '',
@@ -289,6 +290,7 @@ function makeDeploymentInputs(overrides = {}) {
             stickyId: '',
             apiUrl: BASE_URL,
             signal: '',
+            signals: '',
             include: '',
             enableCve: '',
             maxDeps: '',
@@ -343,6 +345,49 @@ function makeDeploymentInputs(overrides = {}) {
     });
     (0, vitest_1.it)('does not throw when only "signal" is provided (no template)', () => {
         (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({ signal: 'TEST_RESULTS' }))).not.toThrow();
+    });
+    (0, vitest_1.it)('throws when "signals" is combined with "signal"', () => {
+        (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({
+            signal: 'DEPENDENCY_DIFF',
+            signals: '- BUNDLE_ANALYSIS',
+        }))).toThrow(/Cannot combine "signals"/);
+    });
+    (0, vitest_1.it)('throws when "signals" is combined with "template"', () => {
+        (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({
+            template: 'DEPLOYMENT',
+            signals: '- TEST_RESULTS',
+        }))).toThrow(/Cannot combine "signals"/);
+    });
+    (0, vitest_1.it)('throws when "signals" is combined with "comment"', () => {
+        (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({
+            comment: 'Hello',
+            signals: '- TEST_RESULTS',
+        }))).toThrow(/Cannot combine "signals"/);
+    });
+    (0, vitest_1.it)('does not throw when bundle inputs are set and signals includes BUNDLE_ANALYSIS', () => {
+        (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({
+            signals: '- DEPENDENCY_DIFF\n- BUNDLE_ANALYSIS',
+            bundleReportPath: '.next/analyze/',
+            bundleBaselinePath: 'baseline/',
+            include: 'dependencies',
+        }))).not.toThrow();
+    });
+    (0, vitest_1.it)('throws when bundle inputs are set and signals does not include BUNDLE_ANALYSIS', () => {
+        (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({
+            signals: '- DEPENDENCY_DIFF',
+            bundleReportPath: '.next/analyze/',
+        }))).toThrow(/BUNDLE_ANALYSIS/);
+    });
+    (0, vitest_1.it)('throws when "signals" is an empty list', () => {
+        (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({ signals: '   \n# nothing' }))).toThrow(/Could not parse any signals/);
+    });
+    (0, vitest_1.it)('throws when "signals" contains an unknown name', () => {
+        (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({ signals: '- NOT_A_SIGNAL' }))).toThrow(/Unknown signal "NOT_A_SIGNAL"/);
+    });
+    (0, vitest_1.it)('throws when "signals" lists the same signal twice', () => {
+        (0, vitest_1.expect)(() => (0, validation_1.validateInputs)(makeRawInputs({
+            signals: '- DEPENDENCY_DIFF\n- DEPENDENCY_DIFF',
+        }))).toThrow(/Duplicate signal "DEPENDENCY_DIFF"/);
     });
 });
 // ---------------------------------------------------------------------------
