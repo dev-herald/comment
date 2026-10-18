@@ -200,14 +200,37 @@ function formatZodError(error) {
 /**
  * Validates template-specific data based on template type
  */
+const RESERVED_INITIATIVE_FIELDS = ['before', 'after', 'delta', 'timestamp', 'commitSha'];
+/**
+ * The server owns comparison fields. They must not be posted with INITIATIVE counts.
+ */
+function rejectReservedInitiativeFields(value) {
+    if (value === null || typeof value !== 'object')
+        return;
+    const entries = Array.isArray(value) ? value.entries() : Object.entries(value);
+    for (const [key, child] of entries) {
+        if (typeof key === 'string' && RESERVED_INITIATIVE_FIELDS.includes(key)) {
+            throw new Error(`Invalid data for INITIATIVE template:\nDo not send "${key}". Send current metric counts only.`);
+        }
+        rejectReservedInitiativeFields(child);
+    }
+}
 function validateTemplateData(template, data) {
     const sanitised = stripEmptyStrings(data);
     try {
         switch (template) {
             case 'DEPLOYMENT':
                 return deploymentSchema.parse(sanitised);
-            case 'MIGRATION':
-                return constants_1.migrationTemplateSchema.parse(sanitised);
+            case 'INITIATIVE': {
+                rejectReservedInitiativeFields(sanitised);
+                const parsed = constants_1.initiativeTemplateSchema.parse(sanitised);
+                for (const [slug, metrics] of Object.entries(parsed.initiatives)) {
+                    if (Object.keys(metrics).length === 0) {
+                        throw new Error(`Invalid data for INITIATIVE template:\nInitiative "${slug}" must include at least one metric`);
+                    }
+                }
+                return parsed;
+            }
             case 'CUSTOM_TABLE':
                 return constants_1.customTableTemplateSchema.parse(sanitised);
             default:
@@ -382,6 +405,14 @@ function buildRequestConfig(inputs) {
                 '    test-results: |\n' +
                 '      - name: Unit Tests\n' +
                 '        path: vitest-results/results.json');
+        }
+        if (inputs.template === 'MIGRATION') {
+            throw new Error('❌ The MIGRATION template is no longer accepted. Send current initiative counts with the INITIATIVE template:\n\n' +
+                '💡 Replace:\n' +
+                '    template: "MIGRATION"\n\n' +
+                '  With:\n' +
+                '    template: "INITIATIVE"\n' +
+                '    template-data: \'{"initiatives":{"emotion-to-panda":{"files":10,"usages":80}}}\'');
         }
         // Template mode - validate template type
         let validatedTemplate;
