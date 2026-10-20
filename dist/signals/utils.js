@@ -34,27 +34,39 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isLocalDep = isLocalDep;
+exports.isWorkspaceDep = isWorkspaceDep;
 exports.isSemver = isSemver;
 exports.getBaseSha = getBaseSha;
-exports.readPackageJsonAtSha = readPackageJsonAtSha;
-exports.readHeadPackageJson = readHeadPackageJson;
+exports.isTrackedPackageJson = isTrackedPackageJson;
+exports.manifestLabel = manifestLabel;
+exports.readDependencyField = readDependencyField;
+exports.indexPackageVersions = indexPackageVersions;
+exports.resolveDependencySpecifier = resolveDependencySpecifier;
+exports.loadManifestsAtSha = loadManifestsAtSha;
 exports.batchOsvQuery = batchOsvQuery;
 exports.formatTimestamp = formatTimestamp;
 const https = __importStar(require("https"));
-const fs = __importStar(require("fs"));
+const core = __importStar(require("@actions/core"));
 const child_process_1 = require("child_process");
 const github = __importStar(require("@actions/github"));
+const zod_1 = require("zod");
 // ============================================================================
 // Version classifiers
 // ============================================================================
 /**
- * Returns true for versions that reference local paths or workspace protocols.
- * These are always skipped — they carry no meaningful version semantics.
+ * Returns true for versions that reference a filesystem path (`file:` or `link:`).
+ * These are skipped — they are path installs, not a named package version.
+ * `workspace:` is not local; callers treat it as a dependency.
  */
 function isLocalDep(version) {
-    return (version.startsWith('file:') ||
-        version.startsWith('workspace:') ||
-        version.startsWith('link:'));
+    return version.startsWith('file:') || version.startsWith('link:');
+}
+/**
+ * Returns true for pnpm, Yarn Berry, and Bun workspace protocol specifiers.
+ * npm does not use this protocol.
+ */
+function isWorkspaceDep(version) {
+    return version.startsWith('workspace:');
 }
 /**
  * Returns true for plain semver-compatible version strings
@@ -82,21 +94,123 @@ function getBaseSha(signalName) {
     throw new Error(`❌ ${signalName}: Could not determine base SHA.\n` +
         '💡 Make sure this action runs on a pull_request event.');
 }
-function readPackageJsonAtSha(sha, signalName) {
-    let raw;
+const manifestSchema = zod_1.z.record(zod_1.z.string(), zod_1.z.unknown());
+const packageIdentitySchema = zod_1.z.object({
+    name: zod_1.z.string().min(1),
+    version: zod_1.z.string().min(1),
+});
+const dependencyMapSchema = zod_1.z.record(zod_1.z.string(), zod_1.z.string().min(1));
+/** Bare `workspace:*`, `workspace:^`, and `workspace:~` mean the workspace package's current version. */
+const BARE_WORKSPACE_ALIAS = /^(?:\*|\^|~)$/;
+/**
+ * True for a repo-relative path that is a package manifest and not inside node_modules.
+ */
+function isTrackedPackageJson(path) {
+    if (path.split('/').includes('node_modules'))
+        return false;
+    return path === 'package.json' || path.endsWith('/package.json');
+}
+/**
+ * Directory shown in the Manifest column. The repo root is `.`.
+ */
+function manifestLabel(packageJsonPath) {
+    if (packageJsonPath === 'package.json')
+        return '.';
+    return packageJsonPath.replace(/\/package\.json$/, '');
+}
+function readDependencyField(manifest, field) {
+    const parsed = dependencyMapSchema.safeParse(manifest[field]);
+    return parsed.success ? parsed.data : {};
+}
+/**
+ * Maps a package `name` to its `version` in the head tree.
+ * A name that appears with two different versions is left out, so we do not
+ * guess which workspace package a `workspace:*` specifier points at.
+ */
+function indexPackageVersions(manifests) {
+    const index = new Map();
+    const ambiguous = new Set();
+    for (const { manifest } of manifests) {
+        const parsed = packageIdentitySchema.safeParse(manifest);
+        if (!parsed.success)
+            continue;
+        const { name, version } = parsed.data;
+        const existing = index.get(name);
+        if (existing !== undefined && existing !== version) {
+            ambiguous.add(name);
+            continue;
+        }
+        index.set(name, version);
+    }
+    for (const name of ambiguous)
+        index.delete(name);
+    return index;
+}
+/**
+ * Bare `workspace:*`, `workspace:^`, and `workspace:~` use the local package version.
+ * `workspace:^1.2.3` keeps the range after the protocol.
+ * Anything else, including an alias we cannot resolve, stays as written.
+ */
+function resolveDependencySpecifier(specifier, depName, versionsByName) {
+    if (!isWorkspaceDep(specifier)) {
+        return { display: specifier, comparable: specifier };
+    }
+    const rest = specifier.slice('workspace:'.length);
+    const resolved = BARE_WORKSPACE_ALIAS.test(rest)
+        ? versionsByName.get(depName) ?? null
+        : rest;
+    if (!resolved || resolved === specifier) {
+        return { display: specifier, comparable: specifier };
+    }
+    return {
+        display: `${specifier} (${resolved})`,
+        comparable: resolved,
+    };
+}
+function gitText(args, signalName, headline) {
     try {
-        raw = (0, child_process_1.execSync)(`git show ${sha}:package.json`, { encoding: 'utf8' });
+        return (0, child_process_1.execFileSync)('git', args, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
     }
     catch (err) {
-        throw new Error(`❌ ${signalName}: Could not read package.json at base SHA ${sha}.\n` +
+        throw new Error(`❌ ${signalName}: ${headline}\n` +
             `💡 Ensure fetch-depth: 0 is set in actions/checkout.\n` +
             `Details: ${err instanceof Error ? err.message : String(err)}`);
     }
-    return JSON.parse(raw);
 }
-function readHeadPackageJson() {
-    const raw = fs.readFileSync('package.json', 'utf8');
-    return JSON.parse(raw);
+function parseManifest(raw, path, sha, signalName) {
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    }
+    catch (err) {
+        core.warning(`⚠️ ${signalName}: Skipping ${path} at ${sha} because it is not valid JSON. ` +
+            `${err instanceof Error ? err.message : String(err)}`);
+        return null;
+    }
+    const manifest = manifestSchema.safeParse(parsed);
+    if (!manifest.success) {
+        core.warning(`⚠️ ${signalName}: Skipping ${path} at ${sha} because it is not a JSON object.`);
+        return null;
+    }
+    return manifest.data;
+}
+/**
+ * Every tracked package.json at `sha`.
+ * Paths come from `git ls-tree -z` so names with spaces stay intact, and the
+ * read does not depend on the job working directory.
+ * One invalid manifest is skipped. A git or fetch-depth failure still throws.
+ */
+function loadManifestsAtSha(sha, signalName) {
+    const listing = gitText(['ls-tree', '-r', '-z', '--name-only', '--', sha], signalName, `Could not list files at SHA ${sha}.`);
+    const paths = listing.split('\0').filter(isTrackedPackageJson).sort();
+    const manifests = [];
+    for (const path of paths) {
+        const raw = gitText(['show', `${sha}:${path}`], signalName, `Could not read ${path} at SHA ${sha}.`);
+        const manifest = parseManifest(raw, path, sha, signalName);
+        if (manifest)
+            manifests.push({ path, manifest });
+    }
+    return manifests;
 }
 // ============================================================================
 // OSV batch query

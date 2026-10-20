@@ -39,6 +39,8 @@ exports.classifyChange = classifyChange;
 exports.formatVersion = formatVersion;
 exports.formatChangeType = formatChangeType;
 exports.formatCveDelta = formatCveDelta;
+exports.collectDependencyChanges = collectDependencyChanges;
+exports.buildDependencyDiffData = buildDependencyDiffData;
 exports.runDependencyDiffSignal = runDependencyDiffSignal;
 const core = __importStar(require("@actions/core"));
 const utils_1 = require("./utils");
@@ -123,12 +125,12 @@ function formatCveDelta(delta) {
  * Only semver versions are queried; non-semver entries keep cveDelta = null.
  */
 async function queryCVEDeltas(changes) {
-    const queryable = changes.filter((c) => (0, utils_1.isSemver)(c.from.replace(/^[~^=<>]+/, '')) && (0, utils_1.isSemver)(c.to.replace(/^[~^=<>]+/, '')));
+    const queryable = changes.filter((c) => (0, utils_1.isSemver)(c.fromComparable.replace(/^[~^=<>]+/, '')) && (0, utils_1.isSemver)(c.toComparable.replace(/^[~^=<>]+/, '')));
     if (queryable.length === 0)
         return;
     const queries = queryable.flatMap((c) => [
-        { package: { name: c.name, ecosystem: 'npm' }, version: c.from.replace(/^[~^=<>]+/, '') },
-        { package: { name: c.name, ecosystem: 'npm' }, version: c.to.replace(/^[~^=<>]+/, '') },
+        { package: { name: c.name, ecosystem: 'npm' }, version: c.fromComparable.replace(/^[~^=<>]+/, '') },
+        { package: { name: c.name, ecosystem: 'npm' }, version: c.toComparable.replace(/^[~^=<>]+/, '') },
     ]);
     core.info(`🔍 Querying OSV for ${queryable.length} package(s)...`);
     const response = await (0, utils_1.batchOsvQuery)(queries);
@@ -139,6 +141,75 @@ async function queryCVEDeltas(changes) {
         const toVulns = toResult?.vulns?.length ?? 0;
         change.cveDelta = toVulns - fromVulns;
     });
+}
+/**
+ * Version changes per manifest path. Specifier strings are compared as written.
+ * A path that exists on only one side is an empty manifest on the other.
+ * New manifests contribute nothing here; those packages belong to NEW_DEPENDENCY.
+ */
+function collectDependencyChanges(baseManifests, headManifests, includedFields) {
+    const baseByPath = new Map(baseManifests.map((m) => [m.path, m.manifest]));
+    const headByPath = new Map(headManifests.map((m) => [m.path, m.manifest]));
+    const versionsByName = (0, utils_1.indexPackageVersions)(headManifests);
+    const paths = [...new Set([...baseByPath.keys(), ...headByPath.keys()])].sort();
+    const changes = [];
+    for (const path of paths) {
+        const baseManifest = baseByPath.get(path) ?? {};
+        const headManifest = headByPath.get(path) ?? {};
+        const label = (0, utils_1.manifestLabel)(path);
+        for (const field of includedFields) {
+            const baseDeps = (0, utils_1.readDependencyField)(baseManifest, field);
+            const headDeps = (0, utils_1.readDependencyField)(headManifest, field);
+            for (const [name, headVersion] of Object.entries(headDeps)) {
+                const baseVersion = baseDeps[name];
+                // Only report version changes for packages that already existed in base
+                if (!baseVersion)
+                    continue;
+                if (baseVersion === headVersion)
+                    continue;
+                // Skip filesystem installs. workspace: specifiers are real rows.
+                if ((0, utils_1.isLocalDep)(baseVersion) || (0, utils_1.isLocalDep)(headVersion))
+                    continue;
+                const fromSpec = (0, utils_1.resolveDependencySpecifier)(baseVersion, name, versionsByName);
+                const toSpec = (0, utils_1.resolveDependencySpecifier)(headVersion, name, versionsByName);
+                changes.push({
+                    manifest: label,
+                    name,
+                    from: fromSpec.display,
+                    to: toSpec.display,
+                    fromComparable: fromSpec.comparable,
+                    toComparable: toSpec.comparable,
+                    changeType: classifyChange(fromSpec.comparable, toSpec.comparable),
+                    cveDelta: null,
+                });
+            }
+        }
+    }
+    return changes;
+}
+function buildDependencyDiffData(changes) {
+    const showManifest = changes.some((c) => c.manifest !== '.');
+    const headers = [
+        ...(showManifest ? ['Manifest'] : []),
+        'Package',
+        'From \u2192 To',
+        'Type',
+        'CVEs',
+    ];
+    return {
+        title: `\uD83D\uDCE6 Dependency changes (${changes.length})`,
+        headers,
+        rows: changes.map((c) => ({
+            cells: [
+                ...(showManifest ? [{ markdown: c.manifest }] : []),
+                { markdown: c.name },
+                { markdown: `${formatVersion(c.from)} \u2192 ${formatVersion(c.to)}` },
+                { markdown: formatChangeType(c.changeType) },
+                { markdown: formatCveDelta(c.cveDelta) },
+            ],
+        })),
+        showTimestamp: true,
+    };
 }
 // ============================================================================
 // Main signal entry point
@@ -152,34 +223,12 @@ async function runDependencyDiffSignal(inputs) {
         enableCve: inputs.enableCve.toLowerCase() === 'true',
         maxDeps: Math.max(1, parseInt(inputs.maxDeps, 10) || 25),
     };
-    core.info(`📦 Scanning dependency fields: ${options.includedFields.join(', ')}`);
     const baseSha = (0, utils_1.getBaseSha)('DEPENDENCY_DIFF');
     core.info(`🔀 Base SHA: ${baseSha}`);
-    const basePkg = (0, utils_1.readPackageJsonAtSha)(baseSha, 'DEPENDENCY_DIFF');
-    const headPkg = (0, utils_1.readHeadPackageJson)();
-    const changes = [];
-    for (const field of options.includedFields) {
-        const baseDeps = basePkg[field] ?? {};
-        const headDeps = headPkg[field] ?? {};
-        for (const [name, headVersion] of Object.entries(headDeps)) {
-            const baseVersion = baseDeps[name];
-            // Only report version changes for packages that already existed in base
-            if (!baseVersion)
-                continue;
-            if (baseVersion === headVersion)
-                continue;
-            // Skip purely local / workspace references
-            if ((0, utils_1.isLocalDep)(baseVersion) || (0, utils_1.isLocalDep)(headVersion))
-                continue;
-            changes.push({
-                name,
-                from: baseVersion,
-                to: headVersion,
-                changeType: classifyChange(baseVersion, headVersion),
-                cveDelta: null,
-            });
-        }
-    }
+    const baseManifests = (0, utils_1.loadManifestsAtSha)(baseSha, 'DEPENDENCY_DIFF');
+    const headManifests = (0, utils_1.loadManifestsAtSha)('HEAD', 'DEPENDENCY_DIFF');
+    core.info(`📦 Scanning ${headManifests.length} package.json file(s); fields: ${options.includedFields.join(', ')}`);
+    const changes = collectDependencyChanges(baseManifests, headManifests, options.includedFields);
     // Apply limit before CVE queries to avoid unnecessary API calls
     const limited = changes.slice(0, options.maxDeps);
     if (options.enableCve && limited.length > 0) {
@@ -200,18 +249,5 @@ async function runDependencyDiffSignal(inputs) {
         };
     }
     core.info(`📋 Found ${limited.length} dependency change(s)`);
-    const data = {
-        title: `\uD83D\uDCE6 Dependency changes (${limited.length})`,
-        headers: ['Package', 'From \u2192 To', 'Type', 'CVEs'],
-        rows: limited.map((c) => ({
-            cells: [
-                { markdown: c.name },
-                { markdown: `${formatVersion(c.from)} \u2192 ${formatVersion(c.to)}` },
-                { markdown: formatChangeType(c.changeType) },
-                { markdown: formatCveDelta(c.cveDelta) },
-            ],
-        })),
-        showTimestamp: true,
-    };
-    return { hasChanges: true, data };
+    return { hasChanges: true, data: buildDependencyDiffData(limited) };
 }

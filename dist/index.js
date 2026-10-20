@@ -31394,6 +31394,8 @@ exports.classifyChange = classifyChange;
 exports.formatVersion = formatVersion;
 exports.formatChangeType = formatChangeType;
 exports.formatCveDelta = formatCveDelta;
+exports.collectDependencyChanges = collectDependencyChanges;
+exports.buildDependencyDiffData = buildDependencyDiffData;
 exports.runDependencyDiffSignal = runDependencyDiffSignal;
 const core = __importStar(__nccwpck_require__(6966));
 const utils_1 = __nccwpck_require__(1229);
@@ -31478,12 +31480,12 @@ function formatCveDelta(delta) {
  * Only semver versions are queried; non-semver entries keep cveDelta = null.
  */
 async function queryCVEDeltas(changes) {
-    const queryable = changes.filter((c) => (0, utils_1.isSemver)(c.from.replace(/^[~^=<>]+/, '')) && (0, utils_1.isSemver)(c.to.replace(/^[~^=<>]+/, '')));
+    const queryable = changes.filter((c) => (0, utils_1.isSemver)(c.fromComparable.replace(/^[~^=<>]+/, '')) && (0, utils_1.isSemver)(c.toComparable.replace(/^[~^=<>]+/, '')));
     if (queryable.length === 0)
         return;
     const queries = queryable.flatMap((c) => [
-        { package: { name: c.name, ecosystem: 'npm' }, version: c.from.replace(/^[~^=<>]+/, '') },
-        { package: { name: c.name, ecosystem: 'npm' }, version: c.to.replace(/^[~^=<>]+/, '') },
+        { package: { name: c.name, ecosystem: 'npm' }, version: c.fromComparable.replace(/^[~^=<>]+/, '') },
+        { package: { name: c.name, ecosystem: 'npm' }, version: c.toComparable.replace(/^[~^=<>]+/, '') },
     ]);
     core.info(`🔍 Querying OSV for ${queryable.length} package(s)...`);
     const response = await (0, utils_1.batchOsvQuery)(queries);
@@ -31494,6 +31496,75 @@ async function queryCVEDeltas(changes) {
         const toVulns = toResult?.vulns?.length ?? 0;
         change.cveDelta = toVulns - fromVulns;
     });
+}
+/**
+ * Version changes per manifest path. Specifier strings are compared as written.
+ * A path that exists on only one side is an empty manifest on the other.
+ * New manifests contribute nothing here; those packages belong to NEW_DEPENDENCY.
+ */
+function collectDependencyChanges(baseManifests, headManifests, includedFields) {
+    const baseByPath = new Map(baseManifests.map((m) => [m.path, m.manifest]));
+    const headByPath = new Map(headManifests.map((m) => [m.path, m.manifest]));
+    const versionsByName = (0, utils_1.indexPackageVersions)(headManifests);
+    const paths = [...new Set([...baseByPath.keys(), ...headByPath.keys()])].sort();
+    const changes = [];
+    for (const path of paths) {
+        const baseManifest = baseByPath.get(path) ?? {};
+        const headManifest = headByPath.get(path) ?? {};
+        const label = (0, utils_1.manifestLabel)(path);
+        for (const field of includedFields) {
+            const baseDeps = (0, utils_1.readDependencyField)(baseManifest, field);
+            const headDeps = (0, utils_1.readDependencyField)(headManifest, field);
+            for (const [name, headVersion] of Object.entries(headDeps)) {
+                const baseVersion = baseDeps[name];
+                // Only report version changes for packages that already existed in base
+                if (!baseVersion)
+                    continue;
+                if (baseVersion === headVersion)
+                    continue;
+                // Skip filesystem installs. workspace: specifiers are real rows.
+                if ((0, utils_1.isLocalDep)(baseVersion) || (0, utils_1.isLocalDep)(headVersion))
+                    continue;
+                const fromSpec = (0, utils_1.resolveDependencySpecifier)(baseVersion, name, versionsByName);
+                const toSpec = (0, utils_1.resolveDependencySpecifier)(headVersion, name, versionsByName);
+                changes.push({
+                    manifest: label,
+                    name,
+                    from: fromSpec.display,
+                    to: toSpec.display,
+                    fromComparable: fromSpec.comparable,
+                    toComparable: toSpec.comparable,
+                    changeType: classifyChange(fromSpec.comparable, toSpec.comparable),
+                    cveDelta: null,
+                });
+            }
+        }
+    }
+    return changes;
+}
+function buildDependencyDiffData(changes) {
+    const showManifest = changes.some((c) => c.manifest !== '.');
+    const headers = [
+        ...(showManifest ? ['Manifest'] : []),
+        'Package',
+        'From \u2192 To',
+        'Type',
+        'CVEs',
+    ];
+    return {
+        title: `\uD83D\uDCE6 Dependency changes (${changes.length})`,
+        headers,
+        rows: changes.map((c) => ({
+            cells: [
+                ...(showManifest ? [{ markdown: c.manifest }] : []),
+                { markdown: c.name },
+                { markdown: `${formatVersion(c.from)} \u2192 ${formatVersion(c.to)}` },
+                { markdown: formatChangeType(c.changeType) },
+                { markdown: formatCveDelta(c.cveDelta) },
+            ],
+        })),
+        showTimestamp: true,
+    };
 }
 // ============================================================================
 // Main signal entry point
@@ -31507,34 +31578,12 @@ async function runDependencyDiffSignal(inputs) {
         enableCve: inputs.enableCve.toLowerCase() === 'true',
         maxDeps: Math.max(1, parseInt(inputs.maxDeps, 10) || 25),
     };
-    core.info(`📦 Scanning dependency fields: ${options.includedFields.join(', ')}`);
     const baseSha = (0, utils_1.getBaseSha)('DEPENDENCY_DIFF');
     core.info(`🔀 Base SHA: ${baseSha}`);
-    const basePkg = (0, utils_1.readPackageJsonAtSha)(baseSha, 'DEPENDENCY_DIFF');
-    const headPkg = (0, utils_1.readHeadPackageJson)();
-    const changes = [];
-    for (const field of options.includedFields) {
-        const baseDeps = basePkg[field] ?? {};
-        const headDeps = headPkg[field] ?? {};
-        for (const [name, headVersion] of Object.entries(headDeps)) {
-            const baseVersion = baseDeps[name];
-            // Only report version changes for packages that already existed in base
-            if (!baseVersion)
-                continue;
-            if (baseVersion === headVersion)
-                continue;
-            // Skip purely local / workspace references
-            if ((0, utils_1.isLocalDep)(baseVersion) || (0, utils_1.isLocalDep)(headVersion))
-                continue;
-            changes.push({
-                name,
-                from: baseVersion,
-                to: headVersion,
-                changeType: classifyChange(baseVersion, headVersion),
-                cveDelta: null,
-            });
-        }
-    }
+    const baseManifests = (0, utils_1.loadManifestsAtSha)(baseSha, 'DEPENDENCY_DIFF');
+    const headManifests = (0, utils_1.loadManifestsAtSha)('HEAD', 'DEPENDENCY_DIFF');
+    core.info(`📦 Scanning ${headManifests.length} package.json file(s); fields: ${options.includedFields.join(', ')}`);
+    const changes = collectDependencyChanges(baseManifests, headManifests, options.includedFields);
     // Apply limit before CVE queries to avoid unnecessary API calls
     const limited = changes.slice(0, options.maxDeps);
     if (options.enableCve && limited.length > 0) {
@@ -31555,20 +31604,7 @@ async function runDependencyDiffSignal(inputs) {
         };
     }
     core.info(`📋 Found ${limited.length} dependency change(s)`);
-    const data = {
-        title: `\uD83D\uDCE6 Dependency changes (${limited.length})`,
-        headers: ['Package', 'From \u2192 To', 'Type', 'CVEs'],
-        rows: limited.map((c) => ({
-            cells: [
-                { markdown: c.name },
-                { markdown: `${formatVersion(c.from)} \u2192 ${formatVersion(c.to)}` },
-                { markdown: formatChangeType(c.changeType) },
-                { markdown: formatCveDelta(c.cveDelta) },
-            ],
-        })),
-        showTimestamp: true,
-    };
-    return { hasChanges: true, data };
+    return { hasChanges: true, data: buildDependencyDiffData(limited) };
 }
 
 
@@ -31743,6 +31779,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.formatCveCount = formatCveCount;
 exports.formatDownloads = formatDownloads;
 exports.formatRelativeTime = formatRelativeTime;
+exports.collectNewDependencies = collectNewDependencies;
+exports.buildNewDependencyData = buildNewDependencyData;
 exports.runNewDependencySignal = runNewDependencySignal;
 const https = __importStar(__nccwpck_require__(5692));
 const core = __importStar(__nccwpck_require__(6966));
@@ -31756,12 +31794,12 @@ const utils_1 = __nccwpck_require__(1229);
  * Only semver versions are queried; non-semver entries keep cveCount = null.
  */
 async function queryCVECounts(deps) {
-    const queryable = deps.filter((d) => (0, utils_1.isSemver)(d.version.replace(/^[~^=<>]+/, '')));
+    const queryable = deps.filter((d) => (0, utils_1.isSemver)(d.comparableVersion.replace(/^[~^=<>]+/, '')));
     if (queryable.length === 0)
         return;
     const queries = queryable.map((d) => ({
         package: { name: d.name, ecosystem: 'npm' },
-        version: d.version.replace(/^[~^=<>]+/, ''),
+        version: d.comparableVersion.replace(/^[~^=<>]+/, ''),
     }));
     core.info(`🔍 Querying OSV for ${queryable.length} new package(s)...`);
     const response = await (0, utils_1.batchOsvQuery)(queries);
@@ -31800,9 +31838,12 @@ function fetchNpmDownloads(packageName) {
     });
 }
 async function queryNpmDownloads(deps) {
-    core.info(`📊 Fetching weekly downloads for ${deps.length} package(s)...`);
-    const results = await Promise.all(deps.map((d) => fetchNpmDownloads(d.name)));
-    deps.forEach((dep, i) => { dep.weeklyDownloads = results[i] ?? null; });
+    const targets = deps.filter((d) => !d.workspace);
+    if (targets.length === 0)
+        return;
+    core.info(`📊 Fetching weekly downloads for ${targets.length} package(s)...`);
+    const results = await Promise.all(targets.map((d) => fetchNpmDownloads(d.name)));
+    targets.forEach((dep, i) => { dep.weeklyDownloads = results[i] ?? null; });
 }
 // ============================================================================
 // deps.dev version API
@@ -31841,9 +31882,12 @@ function fetchDepsDevVersion(packageName, version) {
     });
 }
 async function queryDepsDevStats(deps) {
-    core.info(`📅 Fetching release dates for ${deps.length} package(s)...`);
-    const results = await Promise.all(deps.map((d) => fetchDepsDevVersion(d.name, d.version)));
-    deps.forEach((dep, i) => { dep.publishedAt = results[i] ?? null; });
+    const targets = deps.filter((d) => !d.workspace);
+    if (targets.length === 0)
+        return;
+    core.info(`📅 Fetching release dates for ${targets.length} package(s)...`);
+    const results = await Promise.all(targets.map((d) => fetchDepsDevVersion(d.name, d.comparableVersion)));
+    targets.forEach((dep, i) => { dep.publishedAt = results[i] ?? null; });
 }
 // ============================================================================
 // Formatters
@@ -31899,6 +31943,70 @@ function formatRelativeTime(dateStr) {
     const years = Math.floor(diffDays / 365);
     return `${years} year${years === 1 ? '' : 's'} ago`;
 }
+/**
+ * Packages present on head and absent from the same manifest path on base.
+ * A brand-new package.json contributes every dependency it declares.
+ */
+function collectNewDependencies(baseManifests, headManifests, includedFields) {
+    const baseByPath = new Map(baseManifests.map((m) => [m.path, m.manifest]));
+    const headByPath = new Map(headManifests.map((m) => [m.path, m.manifest]));
+    const versionsByName = (0, utils_1.indexPackageVersions)(headManifests);
+    const paths = [...new Set([...baseByPath.keys(), ...headByPath.keys()])].sort();
+    const newDeps = [];
+    for (const path of paths) {
+        const baseManifest = baseByPath.get(path) ?? {};
+        const headManifest = headByPath.get(path) ?? {};
+        const label = (0, utils_1.manifestLabel)(path);
+        for (const field of includedFields) {
+            const baseDeps = (0, utils_1.readDependencyField)(baseManifest, field);
+            const headDeps = (0, utils_1.readDependencyField)(headManifest, field);
+            for (const [name, version] of Object.entries(headDeps)) {
+                if (baseDeps[name] !== undefined)
+                    continue;
+                if ((0, utils_1.isLocalDep)(version))
+                    continue;
+                const spec = (0, utils_1.resolveDependencySpecifier)(version, name, versionsByName);
+                newDeps.push({
+                    manifest: label,
+                    name,
+                    version: spec.display,
+                    comparableVersion: spec.comparable,
+                    workspace: (0, utils_1.isWorkspaceDep)(version),
+                    cveCount: null,
+                    weeklyDownloads: null,
+                    publishedAt: null,
+                });
+            }
+        }
+    }
+    return newDeps;
+}
+function buildNewDependencyData(deps) {
+    const showManifest = deps.some((d) => d.manifest !== '.');
+    const headers = [
+        ...(showManifest ? ['Manifest'] : []),
+        'Package',
+        'Version',
+        'CVEs',
+        'Weekly DL',
+        'Last Release',
+    ];
+    return {
+        title: `\uD83D\uDCE6 New dependencies added (${deps.length})`,
+        headers,
+        rows: deps.map((d) => ({
+            cells: [
+                ...(showManifest ? [{ markdown: d.manifest }] : []),
+                { markdown: d.name },
+                { markdown: d.version },
+                { markdown: formatCveCount(d.cveCount) },
+                { markdown: formatDownloads(d.weeklyDownloads) },
+                { markdown: formatRelativeTime(d.publishedAt) },
+            ],
+        })),
+        showTimestamp: true,
+    };
+}
 // ============================================================================
 // Main signal entry point
 // ============================================================================
@@ -31911,31 +32019,12 @@ async function runNewDependencySignal(inputs) {
         enableCve: inputs.enableCve.toLowerCase() === 'true',
         maxDeps: Math.max(1, parseInt(inputs.maxDeps, 10) || 25),
     };
-    core.info(`📦 Scanning dependency fields: ${options.includedFields.join(', ')}`);
     const baseSha = (0, utils_1.getBaseSha)('NEW_DEPENDENCY');
     core.info(`🔀 Base SHA: ${baseSha}`);
-    const basePkg = (0, utils_1.readPackageJsonAtSha)(baseSha, 'NEW_DEPENDENCY');
-    const headPkg = (0, utils_1.readHeadPackageJson)();
-    const newDeps = [];
-    for (const field of options.includedFields) {
-        const baseDeps = basePkg[field] ?? {};
-        const headDeps = headPkg[field] ?? {};
-        for (const [name, version] of Object.entries(headDeps)) {
-            // Only report packages that did NOT exist in base at all
-            if (baseDeps[name] !== undefined)
-                continue;
-            // Skip purely local / workspace references
-            if ((0, utils_1.isLocalDep)(version))
-                continue;
-            newDeps.push({
-                name,
-                version,
-                cveCount: null,
-                weeklyDownloads: null,
-                publishedAt: null,
-            });
-        }
-    }
+    const baseManifests = (0, utils_1.loadManifestsAtSha)(baseSha, 'NEW_DEPENDENCY');
+    const headManifests = (0, utils_1.loadManifestsAtSha)('HEAD', 'NEW_DEPENDENCY');
+    core.info(`📦 Scanning ${headManifests.length} package.json file(s); fields: ${options.includedFields.join(', ')}`);
+    const newDeps = collectNewDependencies(baseManifests, headManifests, options.includedFields);
     // Apply limit before any API queries to avoid unnecessary calls
     const limited = newDeps.slice(0, options.maxDeps);
     if (limited.length === 0) {
@@ -31964,21 +32053,7 @@ async function runNewDependencySignal(inputs) {
                 `Details: ${err instanceof Error ? err.message : String(err)}`);
         }),
     ]);
-    const data = {
-        title: `\uD83D\uDCE6 New dependencies added (${limited.length})`,
-        headers: ['Package', 'Version', 'CVEs', 'Weekly DL', 'Last Release'],
-        rows: limited.map((d) => ({
-            cells: [
-                { markdown: d.name },
-                { markdown: d.version },
-                { markdown: formatCveCount(d.cveCount) },
-                { markdown: formatDownloads(d.weeklyDownloads) },
-                { markdown: formatRelativeTime(d.publishedAt) },
-            ],
-        })),
-        showTimestamp: true,
-    };
-    return { hasChanges: true, data };
+    return { hasChanges: true, data: buildNewDependencyData(limited) };
 }
 
 
@@ -32139,27 +32214,39 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.isLocalDep = isLocalDep;
+exports.isWorkspaceDep = isWorkspaceDep;
 exports.isSemver = isSemver;
 exports.getBaseSha = getBaseSha;
-exports.readPackageJsonAtSha = readPackageJsonAtSha;
-exports.readHeadPackageJson = readHeadPackageJson;
+exports.isTrackedPackageJson = isTrackedPackageJson;
+exports.manifestLabel = manifestLabel;
+exports.readDependencyField = readDependencyField;
+exports.indexPackageVersions = indexPackageVersions;
+exports.resolveDependencySpecifier = resolveDependencySpecifier;
+exports.loadManifestsAtSha = loadManifestsAtSha;
 exports.batchOsvQuery = batchOsvQuery;
 exports.formatTimestamp = formatTimestamp;
 const https = __importStar(__nccwpck_require__(5692));
-const fs = __importStar(__nccwpck_require__(9896));
+const core = __importStar(__nccwpck_require__(6966));
 const child_process_1 = __nccwpck_require__(7698);
 const github = __importStar(__nccwpck_require__(4903));
+const zod_1 = __nccwpck_require__(8661);
 // ============================================================================
 // Version classifiers
 // ============================================================================
 /**
- * Returns true for versions that reference local paths or workspace protocols.
- * These are always skipped — they carry no meaningful version semantics.
+ * Returns true for versions that reference a filesystem path (`file:` or `link:`).
+ * These are skipped — they are path installs, not a named package version.
+ * `workspace:` is not local; callers treat it as a dependency.
  */
 function isLocalDep(version) {
-    return (version.startsWith('file:') ||
-        version.startsWith('workspace:') ||
-        version.startsWith('link:'));
+    return version.startsWith('file:') || version.startsWith('link:');
+}
+/**
+ * Returns true for pnpm, Yarn Berry, and Bun workspace protocol specifiers.
+ * npm does not use this protocol.
+ */
+function isWorkspaceDep(version) {
+    return version.startsWith('workspace:');
 }
 /**
  * Returns true for plain semver-compatible version strings
@@ -32187,21 +32274,123 @@ function getBaseSha(signalName) {
     throw new Error(`❌ ${signalName}: Could not determine base SHA.\n` +
         '💡 Make sure this action runs on a pull_request event.');
 }
-function readPackageJsonAtSha(sha, signalName) {
-    let raw;
+const manifestSchema = zod_1.z.record(zod_1.z.string(), zod_1.z.unknown());
+const packageIdentitySchema = zod_1.z.object({
+    name: zod_1.z.string().min(1),
+    version: zod_1.z.string().min(1),
+});
+const dependencyMapSchema = zod_1.z.record(zod_1.z.string(), zod_1.z.string().min(1));
+/** Bare `workspace:*`, `workspace:^`, and `workspace:~` mean the workspace package's current version. */
+const BARE_WORKSPACE_ALIAS = /^(?:\*|\^|~)$/;
+/**
+ * True for a repo-relative path that is a package manifest and not inside node_modules.
+ */
+function isTrackedPackageJson(path) {
+    if (path.split('/').includes('node_modules'))
+        return false;
+    return path === 'package.json' || path.endsWith('/package.json');
+}
+/**
+ * Directory shown in the Manifest column. The repo root is `.`.
+ */
+function manifestLabel(packageJsonPath) {
+    if (packageJsonPath === 'package.json')
+        return '.';
+    return packageJsonPath.replace(/\/package\.json$/, '');
+}
+function readDependencyField(manifest, field) {
+    const parsed = dependencyMapSchema.safeParse(manifest[field]);
+    return parsed.success ? parsed.data : {};
+}
+/**
+ * Maps a package `name` to its `version` in the head tree.
+ * A name that appears with two different versions is left out, so we do not
+ * guess which workspace package a `workspace:*` specifier points at.
+ */
+function indexPackageVersions(manifests) {
+    const index = new Map();
+    const ambiguous = new Set();
+    for (const { manifest } of manifests) {
+        const parsed = packageIdentitySchema.safeParse(manifest);
+        if (!parsed.success)
+            continue;
+        const { name, version } = parsed.data;
+        const existing = index.get(name);
+        if (existing !== undefined && existing !== version) {
+            ambiguous.add(name);
+            continue;
+        }
+        index.set(name, version);
+    }
+    for (const name of ambiguous)
+        index.delete(name);
+    return index;
+}
+/**
+ * Bare `workspace:*`, `workspace:^`, and `workspace:~` use the local package version.
+ * `workspace:^1.2.3` keeps the range after the protocol.
+ * Anything else, including an alias we cannot resolve, stays as written.
+ */
+function resolveDependencySpecifier(specifier, depName, versionsByName) {
+    if (!isWorkspaceDep(specifier)) {
+        return { display: specifier, comparable: specifier };
+    }
+    const rest = specifier.slice('workspace:'.length);
+    const resolved = BARE_WORKSPACE_ALIAS.test(rest)
+        ? versionsByName.get(depName) ?? null
+        : rest;
+    if (!resolved || resolved === specifier) {
+        return { display: specifier, comparable: specifier };
+    }
+    return {
+        display: `${specifier} (${resolved})`,
+        comparable: resolved,
+    };
+}
+function gitText(args, signalName, headline) {
     try {
-        raw = (0, child_process_1.execSync)(`git show ${sha}:package.json`, { encoding: 'utf8' });
+        return (0, child_process_1.execFileSync)('git', args, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
     }
     catch (err) {
-        throw new Error(`❌ ${signalName}: Could not read package.json at base SHA ${sha}.\n` +
+        throw new Error(`❌ ${signalName}: ${headline}\n` +
             `💡 Ensure fetch-depth: 0 is set in actions/checkout.\n` +
             `Details: ${err instanceof Error ? err.message : String(err)}`);
     }
-    return JSON.parse(raw);
 }
-function readHeadPackageJson() {
-    const raw = fs.readFileSync('package.json', 'utf8');
-    return JSON.parse(raw);
+function parseManifest(raw, path, sha, signalName) {
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    }
+    catch (err) {
+        core.warning(`⚠️ ${signalName}: Skipping ${path} at ${sha} because it is not valid JSON. ` +
+            `${err instanceof Error ? err.message : String(err)}`);
+        return null;
+    }
+    const manifest = manifestSchema.safeParse(parsed);
+    if (!manifest.success) {
+        core.warning(`⚠️ ${signalName}: Skipping ${path} at ${sha} because it is not a JSON object.`);
+        return null;
+    }
+    return manifest.data;
+}
+/**
+ * Every tracked package.json at `sha`.
+ * Paths come from `git ls-tree -z` so names with spaces stay intact, and the
+ * read does not depend on the job working directory.
+ * One invalid manifest is skipped. A git or fetch-depth failure still throws.
+ */
+function loadManifestsAtSha(sha, signalName) {
+    const listing = gitText(['ls-tree', '-r', '-z', '--name-only', '--', sha], signalName, `Could not list files at SHA ${sha}.`);
+    const paths = listing.split('\0').filter(isTrackedPackageJson).sort();
+    const manifests = [];
+    for (const path of paths) {
+        const raw = gitText(['show', `${sha}:${path}`], signalName, `Could not read ${path} at SHA ${sha}.`);
+        const manifest = parseManifest(raw, path, sha, signalName);
+        if (manifest)
+            manifests.push({ path, manifest });
+    }
+    return manifests;
 }
 // ============================================================================
 // OSV batch query
