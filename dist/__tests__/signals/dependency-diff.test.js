@@ -182,7 +182,7 @@ const fields = ['dependencies'];
         const changes = (0, dependency_diff_1.collectDependencyChanges)(base, head, fields);
         (0, vitest_1.expect)(changes.map((c) => [c.manifest, c.name, c.changeType])).toEqual([
             ['apps/web', 'react', 'minor'],
-            ['root manifest', 'lodash', 'major'],
+            ['root', 'lodash', 'major'],
         ]);
     });
     (0, vitest_1.it)('ignores an unchanged workspace:* even when the local package version moved', () => {
@@ -285,7 +285,7 @@ const fields = ['dependencies'];
         (0, vitest_1.expect)(data.headers).toEqual(['Workspace', 'Package', 'From → To', 'Type', 'CVEs']);
         const rows = data.rows;
         (0, vitest_1.expect)(rows).toHaveLength(1);
-        (0, vitest_1.expect)(rows[0].cells[0].markdown).toBe('root manifest');
+        (0, vitest_1.expect)(rows[0].cells[0].markdown).toBe('root');
     });
     (0, vitest_1.it)('keeps the Workspace column when a monorepo only changes one nested package', () => {
         const data = table([
