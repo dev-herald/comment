@@ -39,6 +39,7 @@ exports.isSemver = isSemver;
 exports.getBaseSha = getBaseSha;
 exports.isTrackedPackageJson = isTrackedPackageJson;
 exports.manifestLabel = manifestLabel;
+exports.isMonorepo = isMonorepo;
 exports.readDependencyField = readDependencyField;
 exports.indexPackageVersions = indexPackageVersions;
 exports.resolveDependencySpecifier = resolveDependencySpecifier;
@@ -111,12 +112,19 @@ function isTrackedPackageJson(path) {
     return path === 'package.json' || path.endsWith('/package.json');
 }
 /**
- * Directory shown in the Manifest column. The repo root is `.`.
+ * Directory shown in the Workspace column. The repo root is `root manifest`.
  */
 function manifestLabel(packageJsonPath) {
     if (packageJsonPath === 'package.json')
-        return '.';
+        return 'root manifest';
     return packageJsonPath.replace(/\/package\.json$/, '');
+}
+/**
+ * True when the scanned trees contain more than one package.json.
+ * A single manifest, at the root or nested, is not a monorepo.
+ */
+function isMonorepo(manifests) {
+    return new Set(manifests.map((m) => m.path)).size > 1;
 }
 function readDependencyField(manifest, field) {
     const parsed = dependencyMapSchema.safeParse(manifest[field]);

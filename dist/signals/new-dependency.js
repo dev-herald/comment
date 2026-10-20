@@ -238,10 +238,10 @@ function collectNewDependencies(baseManifests, headManifests, includedFields) {
     }
     return newDeps;
 }
-function buildNewDependencyData(deps) {
-    const showManifest = deps.some((d) => d.manifest !== '.');
+function buildNewDependencyData(deps, options) {
+    const { showManifest } = options;
     const headers = [
-        ...(showManifest ? ['Manifest'] : []),
+        ...(showManifest ? ['Workspace'] : []),
         'Package',
         'Version',
         'CVEs',
@@ -310,5 +310,10 @@ async function runNewDependencySignal(inputs) {
                 `Details: ${err instanceof Error ? err.message : String(err)}`);
         }),
     ]);
-    return { hasChanges: true, data: buildNewDependencyData(limited) };
+    return {
+        hasChanges: true,
+        data: buildNewDependencyData(limited, {
+            showManifest: (0, utils_1.isMonorepo)([...baseManifests, ...headManifests]),
+        }),
+    };
 }
