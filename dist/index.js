@@ -32302,11 +32302,11 @@ function isTrackedPackageJson(path) {
     return path === 'package.json' || path.endsWith('/package.json');
 }
 /**
- * Directory shown in the Workspace column. The repo root is `root manifest`.
+ * Directory shown in the Workspace column. The repo root is `root`.
  */
 function manifestLabel(packageJsonPath) {
     if (packageJsonPath === 'package.json')
-        return 'root manifest';
+        return 'root';
     return packageJsonPath.replace(/\/package\.json$/, '');
 }
 /**

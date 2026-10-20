@@ -106,7 +106,7 @@ const fields = ['dependencies'];
         (0, vitest_1.expect)(data.headers).toEqual(['Workspace', 'Package', 'Version', 'CVEs', 'Weekly DL', 'Last Release']);
         const rows = data.rows;
         (0, vitest_1.expect)(rows).toHaveLength(1);
-        (0, vitest_1.expect)(rows[0].cells[0].markdown).toBe('root manifest');
+        (0, vitest_1.expect)(rows[0].cells[0].markdown).toBe('root');
     });
     (0, vitest_1.it)('keeps the Workspace column when a monorepo only adds a dependency in one package', () => {
         const data = table([
