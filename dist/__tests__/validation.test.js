@@ -4,6 +4,7 @@ const vitest_1 = require("vitest");
 // Mock @actions/core so core.info / core.setFailed etc. are no-ops
 vitest_1.vi.mock('@actions/core');
 const validation_1 = require("../validation");
+const signal_type_1 = require("../signal-type");
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -131,6 +132,99 @@ function makeDeploymentInputs(overrides = {}) {
         const data = config.requestBody.data;
         (0, vitest_1.expect)(data.rows[0].cells[0].markdown).toBe('[label](https://example.com)');
         (0, vitest_1.expect)(data.rows[0].cells[1].markdown).toBe('');
+    });
+});
+// ---------------------------------------------------------------------------
+// INITIATIVE template
+// ---------------------------------------------------------------------------
+(0, vitest_1.describe)('buildRequestConfig – INITIATIVE template', () => {
+    function initiativeInputs(overrides = {}) {
+        return makeDeploymentInputs({
+            template: 'INITIATIVE',
+            templateData: JSON.stringify({
+                initiatives: {
+                    'emotion-to-panda': { files: 10, usages: 80 },
+                },
+            }),
+            ...overrides,
+        });
+    }
+    (0, vitest_1.it)('posts current counts to the template endpoint', () => {
+        const config = (0, validation_1.buildRequestConfig)(initiativeInputs());
+        (0, vitest_1.expect)(config.mode).toBe('template');
+        (0, vitest_1.expect)(config.endpoint).toBe(`${BASE_URL}/comment/template`);
+        const body = config.requestBody;
+        (0, vitest_1.expect)(body.template).toBe('INITIATIVE');
+        (0, vitest_1.expect)(body.prNumber).toBe(42);
+        (0, vitest_1.expect)(body.stickyId).toBeUndefined();
+        (0, vitest_1.expect)(body.data).toEqual({
+            initiatives: {
+                'emotion-to-panda': { files: 10, usages: 80 },
+            },
+        });
+        (0, vitest_1.expect)(body.data).not.toHaveProperty('before');
+        (0, vitest_1.expect)(body.data).not.toHaveProperty('after');
+        (0, vitest_1.expect)(body.data).not.toHaveProperty('delta');
+        (0, vitest_1.expect)(body.data).not.toHaveProperty('timestamp');
+        (0, vitest_1.expect)(body.data).not.toHaveProperty('commitSha');
+        (0, vitest_1.expect)(body.data).not.toHaveProperty('showTimestamp');
+    });
+    (0, vitest_1.it)('includes stickyId only when sticky-id is set', () => {
+        const withSticky = (0, validation_1.buildRequestConfig)(initiativeInputs({ stickyId: 'initiatives' }));
+        (0, vitest_1.expect)(withSticky.requestBody.stickyId).toBe('initiatives');
+        const withoutSticky = (0, validation_1.buildRequestConfig)(initiativeInputs({ stickyId: '   ' }));
+        (0, vitest_1.expect)(withoutSticky.requestBody.stickyId).toBeUndefined();
+    });
+    (0, vitest_1.it)('rejects MIGRATION before a request body is built', () => {
+        const inputs = initiativeInputs({ template: 'MIGRATION' });
+        (0, vitest_1.expect)(() => (0, validation_1.buildRequestConfig)(inputs)).toThrow(/MIGRATION template is no longer accepted/);
+        (0, vitest_1.expect)(() => (0, validation_1.buildRequestConfig)(inputs)).toThrow(/template: "INITIATIVE"/);
+    });
+    (0, vitest_1.it)('rejects an empty initiatives object', () => {
+        const inputs = initiativeInputs({
+            templateData: JSON.stringify({ initiatives: {} }),
+        });
+        (0, vitest_1.expect)(() => (0, validation_1.buildRequestConfig)(inputs)).toThrow(/at least one initiative/i);
+    });
+    vitest_1.it.each(['Emotion', 'a--b', `${'a'.repeat(81)}`])('rejects slug "%s"', (slug) => {
+        const inputs = initiativeInputs({
+            templateData: JSON.stringify({
+                initiatives: { [slug]: { files: 1 } },
+            }),
+        });
+        (0, vitest_1.expect)(() => (0, validation_1.buildRequestConfig)(inputs)).toThrow();
+    });
+    (0, vitest_1.it)('rejects a non-finite metric', () => {
+        const inputs = initiativeInputs({
+            templateData: '{"initiatives":{"emotion-to-panda":{"files":1e309}}}',
+        });
+        (0, vitest_1.expect)(() => (0, validation_1.buildRequestConfig)(inputs)).toThrow(/number/i);
+    });
+    (0, vitest_1.it)('rejects an empty metric map', () => {
+        const inputs = initiativeInputs({
+            templateData: JSON.stringify({
+                initiatives: { 'emotion-to-panda': {} },
+            }),
+        });
+        (0, vitest_1.expect)(() => (0, validation_1.buildRequestConfig)(inputs)).toThrow(/at least one metric/);
+    });
+    vitest_1.it.each(['before', 'after', 'delta', 'timestamp', 'commitSha'])('rejects reserved field "%s"', (field) => {
+        const inputs = initiativeInputs({
+            templateData: JSON.stringify({
+                initiatives: { 'emotion-to-panda': { files: 10, [field]: 1 } },
+            }),
+        });
+        (0, vitest_1.expect)(() => (0, validation_1.buildRequestConfig)(inputs)).toThrow(new RegExp(`Do not send "${field}"`));
+    });
+});
+(0, vitest_1.describe)('signals', () => {
+    (0, vitest_1.it)('does not add an INITIATIVE signal', () => {
+        (0, vitest_1.expect)(signal_type_1.SIGNAL_TYPES).toEqual([
+            'DEPENDENCY_DIFF',
+            'TEST_RESULTS',
+            'NEW_DEPENDENCY',
+            'BUNDLE_ANALYSIS',
+        ]);
     });
 });
 // ---------------------------------------------------------------------------

@@ -3449,7 +3449,7 @@ function copyFile(srcFile, destFile, force) {
 
 /***/ }),
 
-/***/ 6909:
+/***/ 1033:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
@@ -3506,38 +3506,35 @@ var customTableTemplateSchema = zod.z.object({
     message: "All rows must have the same number of cells as headers"
   }
 );
-var migrationMetricSchema = zod.z.object({
-  unit: zod.z.string().min(1, "Unit is required").describe("Unit of measurement (e.g., 'files', 'lines', 'KB')"),
-  before: zod.z.number().describe("Value before the migration"),
-  after: zod.z.number().describe("Value after the migration"),
-  delta: zod.z.number().describe("Change in value (after - before)")
-});
-var migrationItemSchema = zod.z.object({
-  from: zod.z.string().min(1, "Source is required").describe("What was migrated from (e.g., 'emotion', 'JavaScript')"),
-  to: zod.z.string().min(1, "Target is required").describe("What it was migrated to (e.g., 'tailwind', 'TypeScript')"),
-  summary: zod.z.string().min(1, "Summary is required").describe(
-    "Brief summary of the migration progress (e.g., '\u2705 This PR reduced usage of...')"
-  ),
-  whyItMatters: zod.z.string().min(1, "Explanation is required").optional().describe("Optional explanation of why this migration matters"),
-  metric: migrationMetricSchema.describe(
-    "Quantitative metrics showing progress"
+var initiativeSlugSchema = zod.z.string().min(1).max(80).regex(
+  /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+  "Use lowercase letters, numbers, and single hyphens"
+);
+var metricCountSchema = zod.z.record(zod.z.string().min(1), zod.z.number().finite());
+var initiativeTemplateSchema = zod.z.object({
+  initiatives: zod.z.record(initiativeSlugSchema, metricCountSchema).describe(
+    "Slug-keyed counts from the pull request. Each value maps that initiative's metric keys to numbers."
   )
-});
-var migrationTemplateSchema = zod.z.object({
-  migrations: zod.z.array(migrationItemSchema).min(1, "At least one migration is required").describe("Array of migration efforts with metrics"),
-  showTimestamp: zod.z.boolean().default(true).describe("Whether to show the updated timestamp")
+}).superRefine((body, ctx) => {
+  if (Object.keys(body.initiatives).length === 0) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Include at least one initiative",
+      path: ["initiatives"]
+    });
+  }
 });
 var templateTypeSchema = zod.z.enum(
-  ["DEPLOYMENT", "MIGRATION", "CUSTOM_TABLE"],
+  ["DEPLOYMENT", "INITIATIVE", "CUSTOM_TABLE"],
   {
-    message: "Template must be one of: DEPLOYMENT, MIGRATION, CUSTOM_TABLE"
+    message: "Template must be one of: DEPLOYMENT, INITIATIVE, CUSTOM_TABLE"
   }
 );
 
 exports.DEPLOYMENT_STATUS_IMGS = DEPLOYMENT_STATUS_IMGS;
 exports.customTableTemplateSchema = customTableTemplateSchema;
 exports.deploymentTemplateSchema = deploymentTemplateSchema;
-exports.migrationTemplateSchema = migrationTemplateSchema;
+exports.initiativeTemplateSchema = initiativeTemplateSchema;
 exports.prNumberSchema = prNumberSchema;
 exports.simpleCommentSchema = simpleCommentSchema;
 exports.stickyIdSchema = stickyIdSchema;
@@ -32303,7 +32300,7 @@ exports.resolveInputsForSignal = resolveInputsForSignal;
 exports.buildRequestConfig = buildRequestConfig;
 const core = __importStar(__nccwpck_require__(6966));
 const zod_1 = __nccwpck_require__(8661);
-const constants_1 = __nccwpck_require__(6909);
+const constants_1 = __nccwpck_require__(1033);
 const signal_type_1 = __nccwpck_require__(7701);
 Object.defineProperty(exports, "signalTypeSchema", ({ enumerable: true, get: function () { return signal_type_1.signalTypeSchema; } }));
 const parse_signals_1 = __nccwpck_require__(9075);
@@ -32462,14 +32459,37 @@ function formatZodError(error) {
 /**
  * Validates template-specific data based on template type
  */
+const RESERVED_INITIATIVE_FIELDS = ['before', 'after', 'delta', 'timestamp', 'commitSha'];
+/**
+ * The server owns comparison fields. They must not be posted with INITIATIVE counts.
+ */
+function rejectReservedInitiativeFields(value) {
+    if (value === null || typeof value !== 'object')
+        return;
+    const entries = Array.isArray(value) ? value.entries() : Object.entries(value);
+    for (const [key, child] of entries) {
+        if (typeof key === 'string' && RESERVED_INITIATIVE_FIELDS.includes(key)) {
+            throw new Error(`Invalid data for INITIATIVE template:\nDo not send "${key}". Send current metric counts only.`);
+        }
+        rejectReservedInitiativeFields(child);
+    }
+}
 function validateTemplateData(template, data) {
     const sanitised = stripEmptyStrings(data);
     try {
         switch (template) {
             case 'DEPLOYMENT':
                 return deploymentSchema.parse(sanitised);
-            case 'MIGRATION':
-                return constants_1.migrationTemplateSchema.parse(sanitised);
+            case 'INITIATIVE': {
+                rejectReservedInitiativeFields(sanitised);
+                const parsed = constants_1.initiativeTemplateSchema.parse(sanitised);
+                for (const [slug, metrics] of Object.entries(parsed.initiatives)) {
+                    if (Object.keys(metrics).length === 0) {
+                        throw new Error(`Invalid data for INITIATIVE template:\nInitiative "${slug}" must include at least one metric`);
+                    }
+                }
+                return parsed;
+            }
             case 'CUSTOM_TABLE':
                 return constants_1.customTableTemplateSchema.parse(sanitised);
             default:
@@ -32644,6 +32664,14 @@ function buildRequestConfig(inputs) {
                 '    test-results: |\n' +
                 '      - name: Unit Tests\n' +
                 '        path: vitest-results/results.json');
+        }
+        if (inputs.template === 'MIGRATION') {
+            throw new Error('❌ The MIGRATION template is no longer accepted. Send current initiative counts with the INITIATIVE template:\n\n' +
+                '💡 Replace:\n' +
+                '    template: "MIGRATION"\n\n' +
+                '  With:\n' +
+                '    template: "INITIATIVE"\n' +
+                '    template-data: \'{"initiatives":{"emotion-to-panda":{"files":10,"usages":80}}}\'');
         }
         // Template mode - validate template type
         let validatedTemplate;
