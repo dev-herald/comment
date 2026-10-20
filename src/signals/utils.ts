@@ -1,6 +1,8 @@
 import * as https from 'https';
+import * as core from '@actions/core';
 import { execFileSync, execSync } from 'child_process';
 import * as github from '@actions/github';
+import { z } from 'zod';
 
 // ============================================================================
 // Shared types
@@ -67,9 +69,16 @@ export function getBaseSha(signalName: string): string {
   );
 }
 
+const manifestSchema = z.record(z.string(), z.unknown());
+const packageIdentitySchema = z.object({
+  name: z.string().min(1),
+  version: z.string().min(1),
+});
+const dependencyMapSchema = z.record(z.string(), z.string().min(1));
+
 export interface LoadedManifest {
   path: string;
-  manifest: Record<string, unknown>;
+  manifest: z.infer<typeof manifestSchema>;
 }
 
 /** Bare `workspace:*`, `workspace:^`, and `workspace:~` mean the workspace package's current version. */
@@ -92,76 +101,73 @@ export function manifestLabel(packageJsonPath: string): string {
 }
 
 export function readDependencyField(
-  manifest: Record<string, unknown>,
+  manifest: z.infer<typeof manifestSchema>,
   field: string,
 ): Record<string, string> {
-  const value = manifest[field];
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-
-  const deps: Record<string, string> = {};
-  for (const [name, version] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof version === 'string') deps[name] = version;
-  }
-  return deps;
+  const parsed = dependencyMapSchema.safeParse(manifest[field]);
+  return parsed.success ? parsed.data : {};
 }
 
 /**
- * Maps package name to its `version` field using the head tree.
- * Later paths win when two manifests share a name, so the result is stable.
+ * Maps a package `name` to its `version` in the head tree.
+ * A name that appears with two different versions is left out, so we do not
+ * guess which workspace package a `workspace:*` specifier points at.
  */
 export function indexPackageVersions(manifests: LoadedManifest[]): Map<string, string> {
   const index = new Map<string, string>();
-  const sorted = [...manifests].sort((a, b) => a.path.localeCompare(b.path));
-  for (const { manifest } of sorted) {
-    const name = manifest.name;
-    const version = manifest.version;
-    if (typeof name === 'string' && name.length > 0 && typeof version === 'string' && version.length > 0) {
-      index.set(name, version);
+  const ambiguous = new Set<string>();
+
+  for (const { manifest } of manifests) {
+    const parsed = packageIdentitySchema.safeParse(manifest);
+    if (!parsed.success) continue;
+    const { name, version } = parsed.data;
+
+    const existing = index.get(name);
+    if (existing !== undefined && existing !== version) {
+      ambiguous.add(name);
+      continue;
     }
+    index.set(name, version);
   }
+
+  for (const name of ambiguous) index.delete(name);
   return index;
 }
 
+export interface ResolvedSpecifier {
+  /** Text shown in the table. Resolved workspace versions are appended in parentheses. */
+  display: string;
+  /** Semver or range used for the type column and the OSV query. */
+  comparable: string;
+}
+
 /**
- * Semver (or range) used for classification and OSV.
- * Bare workspace aliases resolve through `versionsByName`. An explicit
+ * Bare `workspace:*`, `workspace:^`, and `workspace:~` use the local package version.
  * `workspace:^1.2.3` keeps the range after the protocol.
- * Returns null when a bare alias has no matching local package.
+ * Anything else, including an alias we cannot resolve, stays as written.
  */
-export function workspaceComparableVersion(
+export function resolveDependencySpecifier(
   specifier: string,
   depName: string,
   versionsByName: Map<string, string>,
-): string | null {
-  if (!isWorkspaceDep(specifier)) return null;
-  const rest = specifier.slice('workspace:'.length);
-  if (BARE_WORKSPACE_ALIAS.test(rest)) {
-    return versionsByName.get(depName) ?? null;
+): ResolvedSpecifier {
+  if (!isWorkspaceDep(specifier)) {
+    return { display: specifier, comparable: specifier };
   }
-  return rest;
-}
 
-export function comparableDependencyVersion(
-  specifier: string,
-  depName: string,
-  versionsByName: Map<string, string>,
-): string {
-  if (!isWorkspaceDep(specifier)) return specifier;
-  return workspaceComparableVersion(specifier, depName, versionsByName) ?? specifier;
-}
+  const rest = specifier.slice('workspace:'.length);
+  const resolved = BARE_WORKSPACE_ALIAS.test(rest)
+    ? versionsByName.get(depName) ?? null
+    : rest;
 
-/**
- * Specifier text for the table. Resolved workspace versions are appended in parentheses.
- */
-export function formatDependencyVersion(
-  specifier: string,
-  depName: string,
-  versionsByName: Map<string, string>,
-): string {
-  if (!isWorkspaceDep(specifier)) return specifier;
-  const resolved = workspaceComparableVersion(specifier, depName, versionsByName);
-  if (resolved && resolved !== specifier) return `${specifier} (${resolved})`;
-  return specifier;
+  if (!resolved || resolved === specifier) {
+    return { display: specifier, comparable: specifier };
+  }
+
+  return {
+    display: `${specifier} (${resolved})`,
+    comparable: resolved,
+  };
 }
 
 function gitText(args: string[], signalName: string, headline: string): string {
@@ -181,45 +187,52 @@ function parseManifest(
   path: string,
   sha: string,
   signalName: string,
-): Record<string, unknown> {
+): z.infer<typeof manifestSchema> | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new Error(
-      `❌ ${signalName}: ${path} at SHA ${sha} is not valid JSON.\n` +
-      `Details: ${err instanceof Error ? err.message : String(err)}`
+    core.warning(
+      `⚠️ ${signalName}: Skipping ${path} at ${sha} because it is not valid JSON. ` +
+      `${err instanceof Error ? err.message : String(err)}`,
     );
+    return null;
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`❌ ${signalName}: ${path} at SHA ${sha} is not a JSON object.`);
+
+  const manifest = manifestSchema.safeParse(parsed);
+  if (!manifest.success) {
+    core.warning(`⚠️ ${signalName}: Skipping ${path} at ${sha} because it is not a JSON object.`);
+    return null;
   }
-  return parsed as Record<string, unknown>;
+  return manifest.data;
 }
 
 /**
- * Every tracked package.json at `sha`, read from git so the working directory cannot change which file is used.
+ * Every tracked package.json at `sha`.
+ * Paths come from `git ls-tree -z` so names with spaces stay intact, and the
+ * read does not depend on the job working directory.
+ * One invalid manifest is skipped. A git or fetch-depth failure still throws.
  */
 export function loadManifestsAtSha(sha: string, signalName: string): LoadedManifest[] {
   const listing = gitText(
-    ['ls-tree', '-r', '--name-only', sha],
+    ['ls-tree', '-r', '-z', '--name-only', '--', sha],
     signalName,
     `Could not list files at SHA ${sha}.`,
   );
-  const paths = listing
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(isTrackedPackageJson)
-    .sort();
+  const paths = listing.split('\0').filter(isTrackedPackageJson).sort();
+  const manifests: LoadedManifest[] = [];
 
-  return paths.map((path) => {
+  for (const path of paths) {
     const raw = gitText(
       ['show', `${sha}:${path}`],
       signalName,
       `Could not read ${path} at SHA ${sha}.`,
     );
-    return { path, manifest: parseManifest(raw, path, sha, signalName) };
-  });
+    const manifest = parseManifest(raw, path, sha, signalName);
+    if (manifest) manifests.push({ path, manifest });
+  }
+
+  return manifests;
 }
 
 // ============================================================================

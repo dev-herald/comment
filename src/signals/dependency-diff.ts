@@ -10,8 +10,7 @@ import {
   loadManifestsAtSha,
   readDependencyField,
   indexPackageVersions,
-  comparableDependencyVersion,
-  formatDependencyVersion,
+  resolveDependencySpecifier,
   manifestLabel,
   batchOsvQuery,
   formatTimestamp,
@@ -189,17 +188,17 @@ export function collectDependencyChanges(
         // Skip filesystem installs. workspace: specifiers are real rows.
         if (isLocalDep(baseVersion) || isLocalDep(headVersion)) continue;
 
-        const fromComparable = comparableDependencyVersion(baseVersion, name, versionsByName);
-        const toComparable = comparableDependencyVersion(headVersion, name, versionsByName);
+        const fromSpec = resolveDependencySpecifier(baseVersion, name, versionsByName);
+        const toSpec = resolveDependencySpecifier(headVersion, name, versionsByName);
 
         changes.push({
           manifest: label,
           name,
-          from: formatDependencyVersion(baseVersion, name, versionsByName),
-          to: formatDependencyVersion(headVersion, name, versionsByName),
-          fromComparable,
-          toComparable,
-          changeType: classifyChange(fromComparable, toComparable),
+          from: fromSpec.display,
+          to: toSpec.display,
+          fromComparable: fromSpec.comparable,
+          toComparable: toSpec.comparable,
+          changeType: classifyChange(fromSpec.comparable, toSpec.comparable),
           cveDelta: null,
         });
       }

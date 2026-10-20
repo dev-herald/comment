@@ -270,6 +270,22 @@ describe('collectDependencyChanges', () => {
     });
   });
 
+  it('does not guess a version when two workspace packages share a name', () => {
+    const base = [manifest('apps/web/package.json', { dependencies: { '@acme/ui': '^1.0.0' } })];
+    const head = [
+      manifest('packages/a/package.json', { name: '@acme/ui', version: '1.0.0' }),
+      manifest('packages/b/package.json', { name: '@acme/ui', version: '2.0.0' }),
+      manifest('apps/web/package.json', { dependencies: { '@acme/ui': 'workspace:*' } }),
+    ];
+
+    const [change] = collectDependencyChanges(base, head, fields);
+    expect(change).toMatchObject({
+      to: 'workspace:*',
+      toComparable: 'workspace:*',
+      changeType: 'unknown',
+    });
+  });
+
   it('leaves an unresolved workspace alias as unknown', () => {
     const base = [manifest('package.json', { dependencies: { '@acme/ui': '1.0.0' } })];
     const head = [manifest('package.json', { dependencies: { '@acme/ui': 'workspace:*' } })];

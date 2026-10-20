@@ -12,8 +12,7 @@ import {
   loadManifestsAtSha,
   readDependencyField,
   indexPackageVersions,
-  comparableDependencyVersion,
-  formatDependencyVersion,
+  resolveDependencySpecifier,
   manifestLabel,
   batchOsvQuery,
   formatTimestamp,
@@ -245,11 +244,12 @@ export function collectNewDependencies(
         if (baseDeps[name] !== undefined) continue;
         if (isLocalDep(version)) continue;
 
+        const spec = resolveDependencySpecifier(version, name, versionsByName);
         newDeps.push({
           manifest: label,
           name,
-          version: formatDependencyVersion(version, name, versionsByName),
-          comparableVersion: comparableDependencyVersion(version, name, versionsByName),
+          version: spec.display,
+          comparableVersion: spec.comparable,
           workspace: isWorkspaceDep(version),
           cveCount: null,
           weeklyDownloads: null,
