@@ -4,11 +4,17 @@ import type { ActionInputs } from '../types';
 import {
   type OsvQuery,
   type OsvBatchResponse,
+  type LoadedManifest,
   isLocalDep,
+  isWorkspaceDep,
   isSemver,
   getBaseSha,
-  readPackageJsonAtSha,
-  readHeadPackageJson,
+  loadManifestsAtSha,
+  readDependencyField,
+  indexPackageVersions,
+  comparableDependencyVersion,
+  formatDependencyVersion,
+  manifestLabel,
   batchOsvQuery,
   formatTimestamp,
 } from './utils';
@@ -18,8 +24,11 @@ import {
 // ============================================================================
 
 interface NewDep {
+  manifest: string;
   name: string;
   version: string;
+  comparableVersion: string;
+  workspace: boolean;
   cveCount: number | null;
   weeklyDownloads: number | null;
   publishedAt: string | null;
@@ -47,13 +56,13 @@ export interface NewDependencyResult {
  * Only semver versions are queried; non-semver entries keep cveCount = null.
  */
 async function queryCVECounts(deps: NewDep[]): Promise<void> {
-  const queryable = deps.filter((d) => isSemver(d.version.replace(/^[~^=<>]+/, '')));
+  const queryable = deps.filter((d) => isSemver(d.comparableVersion.replace(/^[~^=<>]+/, '')));
 
   if (queryable.length === 0) return;
 
   const queries: OsvQuery[] = queryable.map((d) => ({
     package: { name: d.name, ecosystem: 'npm' },
-    version: d.version.replace(/^[~^=<>]+/, ''),
+    version: d.comparableVersion.replace(/^[~^=<>]+/, ''),
   }));
 
   core.info(`🔍 Querying OSV for ${queryable.length} new package(s)...`);
@@ -98,9 +107,12 @@ function fetchNpmDownloads(packageName: string): Promise<number | null> {
 }
 
 async function queryNpmDownloads(deps: NewDep[]): Promise<void> {
-  core.info(`📊 Fetching weekly downloads for ${deps.length} package(s)...`);
-  const results = await Promise.all(deps.map((d) => fetchNpmDownloads(d.name)));
-  deps.forEach((dep, i) => { dep.weeklyDownloads = results[i] ?? null; });
+  const targets = deps.filter((d) => !d.workspace);
+  if (targets.length === 0) return;
+
+  core.info(`📊 Fetching weekly downloads for ${targets.length} package(s)...`);
+  const results = await Promise.all(targets.map((d) => fetchNpmDownloads(d.name)));
+  targets.forEach((dep, i) => { dep.weeklyDownloads = results[i] ?? null; });
 }
 
 // ============================================================================
@@ -144,9 +156,12 @@ function fetchDepsDevVersion(packageName: string, version: string): Promise<stri
 }
 
 async function queryDepsDevStats(deps: NewDep[]): Promise<void> {
-  core.info(`📅 Fetching release dates for ${deps.length} package(s)...`);
-  const results = await Promise.all(deps.map((d) => fetchDepsDevVersion(d.name, d.version)));
-  deps.forEach((dep, i) => { dep.publishedAt = results[i] ?? null; });
+  const targets = deps.filter((d) => !d.workspace);
+  if (targets.length === 0) return;
+
+  core.info(`📅 Fetching release dates for ${targets.length} package(s)...`);
+  const results = await Promise.all(targets.map((d) => fetchDepsDevVersion(d.name, d.comparableVersion)));
+  targets.forEach((dep, i) => { dep.publishedAt = results[i] ?? null; });
 }
 
 // ============================================================================
@@ -202,6 +217,79 @@ export function formatRelativeTime(dateStr: string | null): string {
   return `${years} year${years === 1 ? '' : 's'} ago`;
 }
 
+/**
+ * Packages present on head and absent from the same manifest path on base.
+ * A brand-new package.json contributes every dependency it declares.
+ */
+export function collectNewDependencies(
+  baseManifests: LoadedManifest[],
+  headManifests: LoadedManifest[],
+  includedFields: string[],
+): NewDep[] {
+  const baseByPath = new Map(baseManifests.map((m) => [m.path, m.manifest]));
+  const headByPath = new Map(headManifests.map((m) => [m.path, m.manifest]));
+  const versionsByName = indexPackageVersions(headManifests);
+  const paths = [...new Set([...baseByPath.keys(), ...headByPath.keys()])].sort();
+  const newDeps: NewDep[] = [];
+
+  for (const path of paths) {
+    const baseManifest = baseByPath.get(path) ?? {};
+    const headManifest = headByPath.get(path) ?? {};
+    const label = manifestLabel(path);
+
+    for (const field of includedFields) {
+      const baseDeps = readDependencyField(baseManifest, field);
+      const headDeps = readDependencyField(headManifest, field);
+
+      for (const [name, version] of Object.entries(headDeps)) {
+        if (baseDeps[name] !== undefined) continue;
+        if (isLocalDep(version)) continue;
+
+        newDeps.push({
+          manifest: label,
+          name,
+          version: formatDependencyVersion(version, name, versionsByName),
+          comparableVersion: comparableDependencyVersion(version, name, versionsByName),
+          workspace: isWorkspaceDep(version),
+          cveCount: null,
+          weeklyDownloads: null,
+          publishedAt: null,
+        });
+      }
+    }
+  }
+
+  return newDeps;
+}
+
+export function buildNewDependencyData(deps: NewDep[]): Record<string, unknown> {
+  const showManifest = deps.some((d) => d.manifest !== '.');
+  const headers = [
+    ...(showManifest ? ['Manifest'] : []),
+    'Package',
+    'Version',
+    'CVEs',
+    'Weekly DL',
+    'Last Release',
+  ];
+
+  return {
+    title: `\uD83D\uDCE6 New dependencies added (${deps.length})`,
+    headers,
+    rows: deps.map((d) => ({
+      cells: [
+        ...(showManifest ? [{ markdown: d.manifest }] : []),
+        { markdown: d.name },
+        { markdown: d.version },
+        { markdown: formatCveCount(d.cveCount) },
+        { markdown: formatDownloads(d.weeklyDownloads) },
+        { markdown: formatRelativeTime(d.publishedAt) },
+      ],
+    })),
+    showTimestamp: true,
+  };
+}
+
 // ============================================================================
 // Main signal entry point
 // ============================================================================
@@ -216,36 +304,16 @@ export async function runNewDependencySignal(inputs: ActionInputs): Promise<NewD
     maxDeps: Math.max(1, parseInt(inputs.maxDeps, 10) || 25),
   };
 
-  core.info(`📦 Scanning dependency fields: ${options.includedFields.join(', ')}`);
-
   const baseSha = getBaseSha('NEW_DEPENDENCY');
   core.info(`🔀 Base SHA: ${baseSha}`);
 
-  const basePkg = readPackageJsonAtSha(baseSha, 'NEW_DEPENDENCY');
-  const headPkg = readHeadPackageJson();
+  const baseManifests = loadManifestsAtSha(baseSha, 'NEW_DEPENDENCY');
+  const headManifests = loadManifestsAtSha('HEAD', 'NEW_DEPENDENCY');
+  core.info(
+    `📦 Scanning ${headManifests.length} package.json file(s); fields: ${options.includedFields.join(', ')}`,
+  );
 
-  const newDeps: NewDep[] = [];
-
-  for (const field of options.includedFields) {
-    const baseDeps = basePkg[field] ?? {};
-    const headDeps = headPkg[field] ?? {};
-
-    for (const [name, version] of Object.entries(headDeps)) {
-      // Only report packages that did NOT exist in base at all
-      if (baseDeps[name] !== undefined) continue;
-
-      // Skip purely local / workspace references
-      if (isLocalDep(version)) continue;
-
-      newDeps.push({
-        name,
-        version,
-        cveCount: null,
-        weeklyDownloads: null,
-        publishedAt: null,
-      });
-    }
-  }
+  const newDeps = collectNewDependencies(baseManifests, headManifests, options.includedFields);
 
   // Apply limit before any API queries to avoid unnecessary calls
   const limited = newDeps.slice(0, options.maxDeps);
@@ -286,20 +354,5 @@ export async function runNewDependencySignal(inputs: ActionInputs): Promise<NewD
     }),
   ]);
 
-  const data = {
-    title: `\uD83D\uDCE6 New dependencies added (${limited.length})`,
-    headers: ['Package', 'Version', 'CVEs', 'Weekly DL', 'Last Release'],
-    rows: limited.map((d) => ({
-      cells: [
-        { markdown: d.name },
-        { markdown: d.version },
-        { markdown: formatCveCount(d.cveCount) },
-        { markdown: formatDownloads(d.weeklyDownloads) },
-        { markdown: formatRelativeTime(d.publishedAt) },
-      ],
-    })),
-    showTimestamp: true,
-  };
-
-  return { hasChanges: true, data };
+  return { hasChanges: true, data: buildNewDependencyData(limited) };
 }

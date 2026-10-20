@@ -7,7 +7,10 @@ import {
   formatVersion,
   formatChangeType,
   formatCveDelta,
+  collectDependencyChanges,
+  buildDependencyDiffData,
 } from '../../signals/dependency-diff';
+import { isTrackedPackageJson, type LoadedManifest } from '../../signals/utils';
 
 // ---------------------------------------------------------------------------
 // isLocalDep
@@ -17,8 +20,6 @@ describe('isLocalDep', () => {
   it.each([
     'file:../shared',
     'file:./packages/utils',
-    'workspace:*',
-    'workspace:^1.0.0',
     'link:../local-pkg',
   ])('returns true for local ref "%s"', (v) => {
     expect(isLocalDep(v)).toBe(true);
@@ -28,10 +29,24 @@ describe('isLocalDep', () => {
     '1.2.3',
     '^2.0.0',
     '~1.0.0',
+    'workspace:*',
+    'workspace:^1.0.0',
     'git+https://github.com/org/repo.git',
     'latest',
   ])('returns false for non-local "%s"', (v) => {
     expect(isLocalDep(v)).toBe(false);
+  });
+});
+
+describe('isTrackedPackageJson', () => {
+  it('keeps root and nested manifests', () => {
+    expect(isTrackedPackageJson('package.json')).toBe(true);
+    expect(isTrackedPackageJson('apps/web/package.json')).toBe(true);
+  });
+
+  it('drops manifests inside node_modules', () => {
+    expect(isTrackedPackageJson('node_modules/left-pad/package.json')).toBe(false);
+    expect(isTrackedPackageJson('apps/web/node_modules/react/package.json')).toBe(false);
   });
 });
 
@@ -194,5 +209,124 @@ describe('formatCveDelta', () => {
   it('returns "-n" for resolved CVEs', () => {
     expect(formatCveDelta(-1)).toBe('-1');
     expect(formatCveDelta(-2)).toBe('-2');
+  });
+});
+
+function manifest(path: string, body: Record<string, unknown>): LoadedManifest {
+  return { path, manifest: body };
+}
+
+const fields = ['dependencies'];
+
+describe('collectDependencyChanges', () => {
+  it('diffs each package.json against the same path', () => {
+    const base = [
+      manifest('package.json', { dependencies: { lodash: '1.0.0' } }),
+      manifest('apps/web/package.json', { dependencies: { react: '18.0.0' } }),
+    ];
+    const head = [
+      manifest('package.json', { dependencies: { lodash: '2.0.0' } }),
+      manifest('apps/web/package.json', { dependencies: { react: '18.2.0' } }),
+    ];
+
+    const changes = collectDependencyChanges(base, head, fields);
+
+    expect(changes.map((c) => [c.manifest, c.name, c.changeType])).toEqual([
+      ['apps/web', 'react', 'minor'],
+      ['.', 'lodash', 'major'],
+    ]);
+  });
+
+  it('ignores an unchanged workspace:* even when the local package version moved', () => {
+    const base = [
+      manifest('packages/ui/package.json', { name: '@acme/ui', version: '1.0.0' }),
+      manifest('apps/web/package.json', { dependencies: { '@acme/ui': 'workspace:*' } }),
+    ];
+    const head = [
+      manifest('packages/ui/package.json', { name: '@acme/ui', version: '2.0.0' }),
+      manifest('apps/web/package.json', { dependencies: { '@acme/ui': 'workspace:*' } }),
+    ];
+
+    expect(collectDependencyChanges(base, head, fields)).toEqual([]);
+  });
+
+  it('resolves a bare workspace alias for the type column', () => {
+    const base = [
+      manifest('apps/web/package.json', { dependencies: { '@acme/ui': '^1.0.0' } }),
+    ];
+    const head = [
+      manifest('packages/ui/package.json', { name: '@acme/ui', version: '2.0.0' }),
+      manifest('apps/web/package.json', { dependencies: { '@acme/ui': 'workspace:*' } }),
+    ];
+
+    const [change] = collectDependencyChanges(base, head, fields);
+    expect(change).toMatchObject({
+      manifest: 'apps/web',
+      name: '@acme/ui',
+      from: '^1.0.0',
+      to: 'workspace:* (2.0.0)',
+      toComparable: '2.0.0',
+      changeType: 'major',
+    });
+  });
+
+  it('leaves an unresolved workspace alias as unknown', () => {
+    const base = [manifest('package.json', { dependencies: { '@acme/ui': '1.0.0' } })];
+    const head = [manifest('package.json', { dependencies: { '@acme/ui': 'workspace:*' } })];
+
+    const [change] = collectDependencyChanges(base, head, fields);
+    expect(change).toMatchObject({
+      to: 'workspace:*',
+      toComparable: 'workspace:*',
+      changeType: 'unknown',
+    });
+  });
+
+  it('classifies workspace:^1.2.3 from the range after the protocol', () => {
+    const base = [manifest('apps/web/package.json', { dependencies: { '@acme/ui': 'workspace:^1.0.0' } })];
+    const head = [manifest('apps/web/package.json', { dependencies: { '@acme/ui': 'workspace:^1.2.3' } })];
+
+    const [change] = collectDependencyChanges(base, head, fields);
+    expect(change).toMatchObject({
+      from: 'workspace:^1.0.0 (^1.0.0)',
+      to: 'workspace:^1.2.3 (^1.2.3)',
+      fromComparable: '^1.0.0',
+      toComparable: '^1.2.3',
+      changeType: 'minor',
+    });
+  });
+
+  it('skips file: installs and does not treat a new manifest as a version change', () => {
+    const base = [manifest('package.json', { dependencies: { left: 'file:../left' } })];
+    const head = [
+      manifest('package.json', { dependencies: { left: 'file:../left-next' } }),
+      manifest('packages/new/package.json', { dependencies: { zod: '1.0.0' } }),
+    ];
+
+    expect(collectDependencyChanges(base, head, fields)).toEqual([]);
+  });
+});
+
+describe('buildDependencyDiffData', () => {
+  it('omits the Manifest column when every change is in the root', () => {
+    const [change] = collectDependencyChanges(
+      [manifest('package.json', { dependencies: { lodash: '1.0.0' } })],
+      [manifest('package.json', { dependencies: { lodash: '1.0.1' } })],
+      fields,
+    );
+    const data = buildDependencyDiffData([change]);
+    expect(data.headers).toEqual(['Package', 'From → To', 'Type', 'CVEs']);
+  });
+
+  it('adds a Manifest column when a nested package.json changed', () => {
+    const changes = collectDependencyChanges(
+      [manifest('apps/web/package.json', { dependencies: { react: '18.0.0' } })],
+      [manifest('apps/web/package.json', { dependencies: { react: '18.2.0' } })],
+      fields,
+    );
+    const data = buildDependencyDiffData(changes);
+    expect(data.headers).toEqual(['Manifest', 'Package', 'From → To', 'Type', 'CVEs']);
+    const rows = data.rows as Array<{ cells: Array<{ markdown: string }> }>;
+    expect(rows[0].cells[0].markdown).toBe('apps/web');
   });
 });

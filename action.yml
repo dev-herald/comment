@@ -66,7 +66,7 @@ inputs:
     description: 'Include gzip size delta in bundle diff (BUNDLE_ANALYSIS only). Default: false'
     required: false
   include:
-    description: 'Comma-separated list of dependency fields to scan for DEPENDENCY_DIFF. Default: dependencies,devDependencies,optionalDependencies (only used when signal or signals is set)'
+    description: 'Comma-separated list of dependency fields to scan in every tracked package.json (root and nested, excluding node_modules) for DEPENDENCY_DIFF and NEW_DEPENDENCY. Default: dependencies,devDependencies,optionalDependencies (only used when signal or signals is set)'
     required: false
   enable-cve:
     description: 'Set to "true" to query the OSV database for CVE counts per dependency version (DEPENDENCY_DIFF only). Default: false (only used when signal or signals is set)'

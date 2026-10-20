@@ -3,11 +3,16 @@ import type { ActionInputs } from '../types';
 import {
   type OsvQuery,
   type OsvBatchResponse,
+  type LoadedManifest,
   isLocalDep,
   isSemver,
   getBaseSha,
-  readPackageJsonAtSha,
-  readHeadPackageJson,
+  loadManifestsAtSha,
+  readDependencyField,
+  indexPackageVersions,
+  comparableDependencyVersion,
+  formatDependencyVersion,
+  manifestLabel,
   batchOsvQuery,
   formatTimestamp,
 } from './utils';
@@ -21,9 +26,12 @@ export { isLocalDep, isSemver };
 type ChangeType = 'major' | 'minor' | 'patch' | 'unknown';
 
 interface DepChange {
+  manifest: string;
   name: string;
   from: string;
   to: string;
+  fromComparable: string;
+  toComparable: string;
   changeType: ChangeType;
   cveDelta: number | null;
 }
@@ -124,14 +132,14 @@ export function formatCveDelta(delta: number | null): string {
  */
 async function queryCVEDeltas(changes: DepChange[]): Promise<void> {
   const queryable = changes.filter(
-    (c) => isSemver(c.from.replace(/^[~^=<>]+/, '')) && isSemver(c.to.replace(/^[~^=<>]+/, ''))
+    (c) => isSemver(c.fromComparable.replace(/^[~^=<>]+/, '')) && isSemver(c.toComparable.replace(/^[~^=<>]+/, ''))
   );
 
   if (queryable.length === 0) return;
 
   const queries: OsvQuery[] = queryable.flatMap((c) => [
-    { package: { name: c.name, ecosystem: 'npm' }, version: c.from.replace(/^[~^=<>]+/, '') },
-    { package: { name: c.name, ecosystem: 'npm' }, version: c.to.replace(/^[~^=<>]+/, '') },
+    { package: { name: c.name, ecosystem: 'npm' }, version: c.fromComparable.replace(/^[~^=<>]+/, '') },
+    { package: { name: c.name, ecosystem: 'npm' }, version: c.toComparable.replace(/^[~^=<>]+/, '') },
   ]);
 
   core.info(`🔍 Querying OSV for ${queryable.length} package(s)...`);
@@ -144,6 +152,87 @@ async function queryCVEDeltas(changes: DepChange[]): Promise<void> {
     const toVulns = toResult?.vulns?.length ?? 0;
     change.cveDelta = toVulns - fromVulns;
   });
+}
+
+/**
+ * Version changes per manifest path. Specifier strings are compared as written.
+ * A path that exists on only one side is an empty manifest on the other.
+ * New manifests contribute nothing here; those packages belong to NEW_DEPENDENCY.
+ */
+export function collectDependencyChanges(
+  baseManifests: LoadedManifest[],
+  headManifests: LoadedManifest[],
+  includedFields: string[],
+): DepChange[] {
+  const baseByPath = new Map(baseManifests.map((m) => [m.path, m.manifest]));
+  const headByPath = new Map(headManifests.map((m) => [m.path, m.manifest]));
+  const versionsByName = indexPackageVersions(headManifests);
+  const paths = [...new Set([...baseByPath.keys(), ...headByPath.keys()])].sort();
+  const changes: DepChange[] = [];
+
+  for (const path of paths) {
+    const baseManifest = baseByPath.get(path) ?? {};
+    const headManifest = headByPath.get(path) ?? {};
+    const label = manifestLabel(path);
+
+    for (const field of includedFields) {
+      const baseDeps = readDependencyField(baseManifest, field);
+      const headDeps = readDependencyField(headManifest, field);
+
+      for (const [name, headVersion] of Object.entries(headDeps)) {
+        const baseVersion = baseDeps[name];
+
+        // Only report version changes for packages that already existed in base
+        if (!baseVersion) continue;
+        if (baseVersion === headVersion) continue;
+
+        // Skip filesystem installs. workspace: specifiers are real rows.
+        if (isLocalDep(baseVersion) || isLocalDep(headVersion)) continue;
+
+        const fromComparable = comparableDependencyVersion(baseVersion, name, versionsByName);
+        const toComparable = comparableDependencyVersion(headVersion, name, versionsByName);
+
+        changes.push({
+          manifest: label,
+          name,
+          from: formatDependencyVersion(baseVersion, name, versionsByName),
+          to: formatDependencyVersion(headVersion, name, versionsByName),
+          fromComparable,
+          toComparable,
+          changeType: classifyChange(fromComparable, toComparable),
+          cveDelta: null,
+        });
+      }
+    }
+  }
+
+  return changes;
+}
+
+export function buildDependencyDiffData(changes: DepChange[]): Record<string, unknown> {
+  const showManifest = changes.some((c) => c.manifest !== '.');
+  const headers = [
+    ...(showManifest ? ['Manifest'] : []),
+    'Package',
+    'From \u2192 To',
+    'Type',
+    'CVEs',
+  ];
+
+  return {
+    title: `\uD83D\uDCE6 Dependency changes (${changes.length})`,
+    headers,
+    rows: changes.map((c) => ({
+      cells: [
+        ...(showManifest ? [{ markdown: c.manifest }] : []),
+        { markdown: c.name },
+        { markdown: `${formatVersion(c.from)} \u2192 ${formatVersion(c.to)}` },
+        { markdown: formatChangeType(c.changeType) },
+        { markdown: formatCveDelta(c.cveDelta) },
+      ],
+    })),
+    showTimestamp: true,
+  };
 }
 
 // ============================================================================
@@ -160,39 +249,16 @@ export async function runDependencyDiffSignal(inputs: ActionInputs): Promise<Dep
     maxDeps: Math.max(1, parseInt(inputs.maxDeps, 10) || 25),
   };
 
-  core.info(`📦 Scanning dependency fields: ${options.includedFields.join(', ')}`);
-
   const baseSha = getBaseSha('DEPENDENCY_DIFF');
   core.info(`🔀 Base SHA: ${baseSha}`);
 
-  const basePkg = readPackageJsonAtSha(baseSha, 'DEPENDENCY_DIFF');
-  const headPkg = readHeadPackageJson();
+  const baseManifests = loadManifestsAtSha(baseSha, 'DEPENDENCY_DIFF');
+  const headManifests = loadManifestsAtSha('HEAD', 'DEPENDENCY_DIFF');
+  core.info(
+    `📦 Scanning ${headManifests.length} package.json file(s); fields: ${options.includedFields.join(', ')}`,
+  );
 
-  const changes: DepChange[] = [];
-
-  for (const field of options.includedFields) {
-    const baseDeps = basePkg[field] ?? {};
-    const headDeps = headPkg[field] ?? {};
-
-    for (const [name, headVersion] of Object.entries(headDeps)) {
-      const baseVersion = baseDeps[name];
-
-      // Only report version changes for packages that already existed in base
-      if (!baseVersion) continue;
-      if (baseVersion === headVersion) continue;
-
-      // Skip purely local / workspace references
-      if (isLocalDep(baseVersion) || isLocalDep(headVersion)) continue;
-
-      changes.push({
-        name,
-        from: baseVersion,
-        to: headVersion,
-        changeType: classifyChange(baseVersion, headVersion),
-        cveDelta: null,
-      });
-    }
-  }
+  const changes = collectDependencyChanges(baseManifests, headManifests, options.includedFields);
 
   // Apply limit before CVE queries to avoid unnecessary API calls
   const limited = changes.slice(0, options.maxDeps);
@@ -220,19 +286,5 @@ export async function runDependencyDiffSignal(inputs: ActionInputs): Promise<Dep
 
   core.info(`📋 Found ${limited.length} dependency change(s)`);
 
-  const data = {
-    title: `\uD83D\uDCE6 Dependency changes (${limited.length})`,
-    headers: ['Package', 'From \u2192 To', 'Type', 'CVEs'],
-    rows: limited.map((c) => ({
-      cells: [
-        { markdown: c.name },
-        { markdown: `${formatVersion(c.from)} \u2192 ${formatVersion(c.to)}` },
-        { markdown: formatChangeType(c.changeType) },
-        { markdown: formatCveDelta(c.cveDelta) },
-      ],
-    })),
-    showTimestamp: true,
-  };
-
-  return { hasChanges: true, data };
+  return { hasChanges: true, data: buildDependencyDiffData(limited) };
 }

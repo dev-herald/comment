@@ -40,6 +40,8 @@ Copy-paste examples for the [Dev Herald](https://dev-herald.com) `comment` actio
 
 ## Dependency Diff Signal
 
+Compares every tracked `package.json` (the repo root and nested manifests, excluding `node_modules`) with the same file on the base branch.
+
 ```yaml
 - name: Post dependency diff
   uses: dev-herald/comment@v1
@@ -52,6 +54,8 @@ Copy-paste examples for the [Dev Herald](https://dev-herald.com) `comment` actio
 ```
 
 ## New Dependency Signal
+
+Reports packages added in any tracked `package.json` (the repo root and nested manifests, excluding `node_modules`).
 
 ```yaml
 - name: Post new dependency report
