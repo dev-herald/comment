@@ -182,7 +182,7 @@ const fields = ['dependencies'];
         const changes = (0, dependency_diff_1.collectDependencyChanges)(base, head, fields);
         (0, vitest_1.expect)(changes.map((c) => [c.manifest, c.name, c.changeType])).toEqual([
             ['apps/web', 'react', 'minor'],
-            ['.', 'lodash', 'major'],
+            ['root manifest', 'lodash', 'major'],
         ]);
     });
     (0, vitest_1.it)('ignores an unchanged workspace:* even when the local package version moved', () => {
@@ -260,16 +260,44 @@ const fields = ['dependencies'];
     });
 });
 (0, vitest_1.describe)('buildDependencyDiffData', () => {
-    (0, vitest_1.it)('omits the Manifest column when every change is in the root', () => {
-        const [change] = (0, dependency_diff_1.collectDependencyChanges)([manifest('package.json', { dependencies: { lodash: '1.0.0' } })], [manifest('package.json', { dependencies: { lodash: '1.0.1' } })], fields);
-        const data = (0, dependency_diff_1.buildDependencyDiffData)([change]);
+    function table(base, head) {
+        const changes = (0, dependency_diff_1.collectDependencyChanges)(base, head, fields);
+        return (0, dependency_diff_1.buildDependencyDiffData)(changes, {
+            showManifest: (0, utils_1.isMonorepo)([...base, ...head]),
+        });
+    }
+    (0, vitest_1.it)('omits the Workspace column when the only package.json is the root', () => {
+        const data = table([manifest('package.json', { dependencies: { lodash: '1.0.0' } })], [manifest('package.json', { dependencies: { lodash: '1.0.1' } })]);
         (0, vitest_1.expect)(data.headers).toEqual(['Package', 'From → To', 'Type', 'CVEs']);
     });
-    (0, vitest_1.it)('adds a Manifest column when a nested package.json changed', () => {
-        const changes = (0, dependency_diff_1.collectDependencyChanges)([manifest('apps/web/package.json', { dependencies: { react: '18.0.0' } })], [manifest('apps/web/package.json', { dependencies: { react: '18.2.0' } })], fields);
-        const data = (0, dependency_diff_1.buildDependencyDiffData)(changes);
-        (0, vitest_1.expect)(data.headers).toEqual(['Manifest', 'Package', 'From → To', 'Type', 'CVEs']);
+    (0, vitest_1.it)('omits the Workspace column when the only package.json is nested', () => {
+        const data = table([manifest('apps/web/package.json', { dependencies: { react: '18.0.0' } })], [manifest('apps/web/package.json', { dependencies: { react: '18.2.0' } })]);
+        (0, vitest_1.expect)(data.headers).toEqual(['Package', 'From → To', 'Type', 'CVEs']);
+    });
+    (0, vitest_1.it)('keeps the Workspace column when a monorepo only changes the root', () => {
+        const data = table([
+            manifest('package.json', { dependencies: { lodash: '1.0.0' } }),
+            manifest('packages/ui/package.json', { dependencies: { react: '18.0.0' } }),
+        ], [
+            manifest('package.json', { dependencies: { lodash: '1.0.1' } }),
+            manifest('packages/ui/package.json', { dependencies: { react: '18.0.0' } }),
+        ]);
+        (0, vitest_1.expect)(data.headers).toEqual(['Workspace', 'Package', 'From → To', 'Type', 'CVEs']);
         const rows = data.rows;
-        (0, vitest_1.expect)(rows[0].cells[0].markdown).toBe('apps/web');
+        (0, vitest_1.expect)(rows).toHaveLength(1);
+        (0, vitest_1.expect)(rows[0].cells[0].markdown).toBe('root manifest');
+    });
+    (0, vitest_1.it)('keeps the Workspace column when a monorepo only changes one nested package', () => {
+        const data = table([
+            manifest('package.json', { dependencies: { lodash: '1.0.0' } }),
+            manifest('packages/ui/package.json', { dependencies: { react: '18.0.0' } }),
+        ], [
+            manifest('package.json', { dependencies: { lodash: '1.0.0' } }),
+            manifest('packages/ui/package.json', { dependencies: { react: '18.2.0' } }),
+        ]);
+        (0, vitest_1.expect)(data.headers).toEqual(['Workspace', 'Package', 'From → To', 'Type', 'CVEs']);
+        const rows = data.rows;
+        (0, vitest_1.expect)(rows).toHaveLength(1);
+        (0, vitest_1.expect)(rows[0].cells[0].markdown).toBe('packages/ui');
     });
 });

@@ -31542,10 +31542,10 @@ function collectDependencyChanges(baseManifests, headManifests, includedFields) 
     }
     return changes;
 }
-function buildDependencyDiffData(changes) {
-    const showManifest = changes.some((c) => c.manifest !== '.');
+function buildDependencyDiffData(changes, options) {
+    const { showManifest } = options;
     const headers = [
-        ...(showManifest ? ['Manifest'] : []),
+        ...(showManifest ? ['Workspace'] : []),
         'Package',
         'From \u2192 To',
         'Type',
@@ -31604,7 +31604,12 @@ async function runDependencyDiffSignal(inputs) {
         };
     }
     core.info(`📋 Found ${limited.length} dependency change(s)`);
-    return { hasChanges: true, data: buildDependencyDiffData(limited) };
+    return {
+        hasChanges: true,
+        data: buildDependencyDiffData(limited, {
+            showManifest: (0, utils_1.isMonorepo)([...baseManifests, ...headManifests]),
+        }),
+    };
 }
 
 
@@ -31981,10 +31986,10 @@ function collectNewDependencies(baseManifests, headManifests, includedFields) {
     }
     return newDeps;
 }
-function buildNewDependencyData(deps) {
-    const showManifest = deps.some((d) => d.manifest !== '.');
+function buildNewDependencyData(deps, options) {
+    const { showManifest } = options;
     const headers = [
-        ...(showManifest ? ['Manifest'] : []),
+        ...(showManifest ? ['Workspace'] : []),
         'Package',
         'Version',
         'CVEs',
@@ -32053,7 +32058,12 @@ async function runNewDependencySignal(inputs) {
                 `Details: ${err instanceof Error ? err.message : String(err)}`);
         }),
     ]);
-    return { hasChanges: true, data: buildNewDependencyData(limited) };
+    return {
+        hasChanges: true,
+        data: buildNewDependencyData(limited, {
+            showManifest: (0, utils_1.isMonorepo)([...baseManifests, ...headManifests]),
+        }),
+    };
 }
 
 
@@ -32219,6 +32229,7 @@ exports.isSemver = isSemver;
 exports.getBaseSha = getBaseSha;
 exports.isTrackedPackageJson = isTrackedPackageJson;
 exports.manifestLabel = manifestLabel;
+exports.isMonorepo = isMonorepo;
 exports.readDependencyField = readDependencyField;
 exports.indexPackageVersions = indexPackageVersions;
 exports.resolveDependencySpecifier = resolveDependencySpecifier;
@@ -32291,12 +32302,19 @@ function isTrackedPackageJson(path) {
     return path === 'package.json' || path.endsWith('/package.json');
 }
 /**
- * Directory shown in the Manifest column. The repo root is `.`.
+ * Directory shown in the Workspace column. The repo root is `root manifest`.
  */
 function manifestLabel(packageJsonPath) {
     if (packageJsonPath === 'package.json')
-        return '.';
+        return 'root manifest';
     return packageJsonPath.replace(/\/package\.json$/, '');
+}
+/**
+ * True when the scanned trees contain more than one package.json.
+ * A single manifest, at the root or nested, is not a monorepo.
+ */
+function isMonorepo(manifests) {
+    return new Set(manifests.map((m) => m.path)).size > 1;
 }
 function readDependencyField(manifest, field) {
     const parsed = dependencyMapSchema.safeParse(manifest[field]);

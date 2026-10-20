@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const vitest_1 = require("vitest");
 const new_dependency_1 = require("../../signals/new-dependency");
+const utils_1 = require("../../signals/utils");
 function manifest(path, body) {
     return { path, manifest: body };
 }
@@ -80,16 +81,44 @@ const fields = ['dependencies'];
     });
 });
 (0, vitest_1.describe)('buildNewDependencyData', () => {
-    (0, vitest_1.it)('omits the Manifest column when every addition is in the root', () => {
-        const deps = (0, new_dependency_1.collectNewDependencies)([], [manifest('package.json', { dependencies: { zod: '1.0.0' } })], fields);
-        const data = (0, new_dependency_1.buildNewDependencyData)(deps);
+    function table(base, head) {
+        const deps = (0, new_dependency_1.collectNewDependencies)(base, head, fields);
+        return (0, new_dependency_1.buildNewDependencyData)(deps, {
+            showManifest: (0, utils_1.isMonorepo)([...base, ...head]),
+        });
+    }
+    (0, vitest_1.it)('omits the Workspace column when the only package.json is the root', () => {
+        const data = table([], [manifest('package.json', { dependencies: { zod: '1.0.0' } })]);
         (0, vitest_1.expect)(data.headers).toEqual(['Package', 'Version', 'CVEs', 'Weekly DL', 'Last Release']);
     });
-    (0, vitest_1.it)('adds a Manifest column for a nested package.json', () => {
-        const deps = (0, new_dependency_1.collectNewDependencies)([], [manifest('apps/web/package.json', { dependencies: { zod: '1.0.0' } })], fields);
-        const data = (0, new_dependency_1.buildNewDependencyData)(deps);
-        (0, vitest_1.expect)(data.headers).toEqual(['Manifest', 'Package', 'Version', 'CVEs', 'Weekly DL', 'Last Release']);
+    (0, vitest_1.it)('omits the Workspace column when the only package.json is nested', () => {
+        const data = table([], [manifest('apps/web/package.json', { dependencies: { zod: '1.0.0' } })]);
+        (0, vitest_1.expect)(data.headers).toEqual(['Package', 'Version', 'CVEs', 'Weekly DL', 'Last Release']);
+    });
+    (0, vitest_1.it)('keeps the Workspace column when a monorepo only adds a root dependency', () => {
+        const data = table([
+            manifest('package.json', { dependencies: {} }),
+            manifest('packages/ui/package.json', { dependencies: { react: '18.0.0' } }),
+        ], [
+            manifest('package.json', { dependencies: { zod: '1.0.0' } }),
+            manifest('packages/ui/package.json', { dependencies: { react: '18.0.0' } }),
+        ]);
+        (0, vitest_1.expect)(data.headers).toEqual(['Workspace', 'Package', 'Version', 'CVEs', 'Weekly DL', 'Last Release']);
         const rows = data.rows;
-        (0, vitest_1.expect)(rows[0].cells[0].markdown).toBe('apps/web');
+        (0, vitest_1.expect)(rows).toHaveLength(1);
+        (0, vitest_1.expect)(rows[0].cells[0].markdown).toBe('root manifest');
+    });
+    (0, vitest_1.it)('keeps the Workspace column when a monorepo only adds a dependency in one package', () => {
+        const data = table([
+            manifest('package.json', { dependencies: { lodash: '1.0.0' } }),
+            manifest('packages/ui/package.json', { dependencies: {} }),
+        ], [
+            manifest('package.json', { dependencies: { lodash: '1.0.0' } }),
+            manifest('packages/ui/package.json', { dependencies: { zod: '1.0.0' } }),
+        ]);
+        (0, vitest_1.expect)(data.headers).toEqual(['Workspace', 'Package', 'Version', 'CVEs', 'Weekly DL', 'Last Release']);
+        const rows = data.rows;
+        (0, vitest_1.expect)(rows).toHaveLength(1);
+        (0, vitest_1.expect)(rows[0].cells[0].markdown).toBe('packages/ui');
     });
 });

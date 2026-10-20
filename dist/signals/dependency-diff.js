@@ -187,10 +187,10 @@ function collectDependencyChanges(baseManifests, headManifests, includedFields) 
     }
     return changes;
 }
-function buildDependencyDiffData(changes) {
-    const showManifest = changes.some((c) => c.manifest !== '.');
+function buildDependencyDiffData(changes, options) {
+    const { showManifest } = options;
     const headers = [
-        ...(showManifest ? ['Manifest'] : []),
+        ...(showManifest ? ['Workspace'] : []),
         'Package',
         'From \u2192 To',
         'Type',
@@ -249,5 +249,10 @@ async function runDependencyDiffSignal(inputs) {
         };
     }
     core.info(`📋 Found ${limited.length} dependency change(s)`);
-    return { hasChanges: true, data: buildDependencyDiffData(limited) };
+    return {
+        hasChanges: true,
+        data: buildDependencyDiffData(limited, {
+            showManifest: (0, utils_1.isMonorepo)([...baseManifests, ...headManifests]),
+        }),
+    };
 }
