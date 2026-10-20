@@ -93,10 +93,10 @@ export function isTrackedPackageJson(path: string): boolean {
 }
 
 /**
- * Directory shown in the Workspace column. The repo root is `root manifest`.
+ * Directory shown in the Workspace column. The repo root is `root`.
  */
 export function manifestLabel(packageJsonPath: string): string {
-  if (packageJsonPath === 'package.json') return 'root manifest';
+  if (packageJsonPath === 'package.json') return 'root';
   return packageJsonPath.replace(/\/package\.json$/, '');
 }
 

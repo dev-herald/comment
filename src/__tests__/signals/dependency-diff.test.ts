@@ -233,7 +233,7 @@ describe('collectDependencyChanges', () => {
 
     expect(changes.map((c) => [c.manifest, c.name, c.changeType])).toEqual([
       ['apps/web', 'react', 'minor'],
-      ['root manifest', 'lodash', 'major'],
+      ['root', 'lodash', 'major'],
     ]);
   });
 
@@ -361,7 +361,7 @@ describe('buildDependencyDiffData', () => {
     expect(data.headers).toEqual(['Workspace', 'Package', 'From → To', 'Type', 'CVEs']);
     const rows = data.rows as Array<{ cells: Array<{ markdown: string }> }>;
     expect(rows).toHaveLength(1);
-    expect(rows[0].cells[0].markdown).toBe('root manifest');
+    expect(rows[0].cells[0].markdown).toBe('root');
   });
 
   it('keeps the Workspace column when a monorepo only changes one nested package', () => {

@@ -134,7 +134,7 @@ describe('buildNewDependencyData', () => {
     expect(data.headers).toEqual(['Workspace', 'Package', 'Version', 'CVEs', 'Weekly DL', 'Last Release']);
     const rows = data.rows as Array<{ cells: Array<{ markdown: string }> }>;
     expect(rows).toHaveLength(1);
-    expect(rows[0].cells[0].markdown).toBe('root manifest');
+    expect(rows[0].cells[0].markdown).toBe('root');
   });
 
   it('keeps the Workspace column when a monorepo only adds a dependency in one package', () => {
