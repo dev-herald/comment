@@ -10,7 +10,7 @@ import {
   collectDependencyChanges,
   buildDependencyDiffData,
 } from '../../signals/dependency-diff';
-import { isTrackedPackageJson, type LoadedManifest } from '../../signals/utils';
+import { isMonorepo, isTrackedPackageJson, type LoadedManifest } from '../../signals/utils';
 
 // ---------------------------------------------------------------------------
 // isLocalDep
@@ -233,7 +233,7 @@ describe('collectDependencyChanges', () => {
 
     expect(changes.map((c) => [c.manifest, c.name, c.changeType])).toEqual([
       ['apps/web', 'react', 'minor'],
-      ['.', 'lodash', 'major'],
+      ['root manifest', 'lodash', 'major'],
     ]);
   });
 
@@ -324,25 +324,60 @@ describe('collectDependencyChanges', () => {
 });
 
 describe('buildDependencyDiffData', () => {
-  it('omits the Manifest column when every change is in the root', () => {
-    const [change] = collectDependencyChanges(
+  function table(base: LoadedManifest[], head: LoadedManifest[]) {
+    const changes = collectDependencyChanges(base, head, fields);
+    return buildDependencyDiffData(changes, {
+      showManifest: isMonorepo([...base, ...head]),
+    });
+  }
+
+  it('omits the Workspace column when the only package.json is the root', () => {
+    const data = table(
       [manifest('package.json', { dependencies: { lodash: '1.0.0' } })],
       [manifest('package.json', { dependencies: { lodash: '1.0.1' } })],
-      fields,
     );
-    const data = buildDependencyDiffData([change]);
     expect(data.headers).toEqual(['Package', 'From → To', 'Type', 'CVEs']);
   });
 
-  it('adds a Manifest column when a nested package.json changed', () => {
-    const changes = collectDependencyChanges(
+  it('omits the Workspace column when the only package.json is nested', () => {
+    const data = table(
       [manifest('apps/web/package.json', { dependencies: { react: '18.0.0' } })],
       [manifest('apps/web/package.json', { dependencies: { react: '18.2.0' } })],
-      fields,
     );
-    const data = buildDependencyDiffData(changes);
-    expect(data.headers).toEqual(['Manifest', 'Package', 'From → To', 'Type', 'CVEs']);
+    expect(data.headers).toEqual(['Package', 'From → To', 'Type', 'CVEs']);
+  });
+
+  it('keeps the Workspace column when a monorepo only changes the root', () => {
+    const data = table(
+      [
+        manifest('package.json', { dependencies: { lodash: '1.0.0' } }),
+        manifest('packages/ui/package.json', { dependencies: { react: '18.0.0' } }),
+      ],
+      [
+        manifest('package.json', { dependencies: { lodash: '1.0.1' } }),
+        manifest('packages/ui/package.json', { dependencies: { react: '18.0.0' } }),
+      ],
+    );
+    expect(data.headers).toEqual(['Workspace', 'Package', 'From → To', 'Type', 'CVEs']);
     const rows = data.rows as Array<{ cells: Array<{ markdown: string }> }>;
-    expect(rows[0].cells[0].markdown).toBe('apps/web');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].cells[0].markdown).toBe('root manifest');
+  });
+
+  it('keeps the Workspace column when a monorepo only changes one nested package', () => {
+    const data = table(
+      [
+        manifest('package.json', { dependencies: { lodash: '1.0.0' } }),
+        manifest('packages/ui/package.json', { dependencies: { react: '18.0.0' } }),
+      ],
+      [
+        manifest('package.json', { dependencies: { lodash: '1.0.0' } }),
+        manifest('packages/ui/package.json', { dependencies: { react: '18.2.0' } }),
+      ],
+    );
+    expect(data.headers).toEqual(['Workspace', 'Package', 'From → To', 'Type', 'CVEs']);
+    const rows = data.rows as Array<{ cells: Array<{ markdown: string }> }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].cells[0].markdown).toBe('packages/ui');
   });
 });

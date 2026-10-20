@@ -93,11 +93,19 @@ export function isTrackedPackageJson(path: string): boolean {
 }
 
 /**
- * Directory shown in the Manifest column. The repo root is `.`.
+ * Directory shown in the Workspace column. The repo root is `root manifest`.
  */
 export function manifestLabel(packageJsonPath: string): string {
-  if (packageJsonPath === 'package.json') return '.';
+  if (packageJsonPath === 'package.json') return 'root manifest';
   return packageJsonPath.replace(/\/package\.json$/, '');
+}
+
+/**
+ * True when the scanned trees contain more than one package.json.
+ * A single manifest, at the root or nested, is not a monorepo.
+ */
+export function isMonorepo(manifests: LoadedManifest[]): boolean {
+  return new Set(manifests.map((m) => m.path)).size > 1;
 }
 
 export function readDependencyField(

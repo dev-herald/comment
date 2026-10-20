@@ -12,6 +12,7 @@ import {
   indexPackageVersions,
   resolveDependencySpecifier,
   manifestLabel,
+  isMonorepo,
   batchOsvQuery,
   formatTimestamp,
 } from './utils';
@@ -208,10 +209,13 @@ export function collectDependencyChanges(
   return changes;
 }
 
-export function buildDependencyDiffData(changes: DepChange[]): Record<string, unknown> {
-  const showManifest = changes.some((c) => c.manifest !== '.');
+export function buildDependencyDiffData(
+  changes: DepChange[],
+  options: { showManifest: boolean },
+): Record<string, unknown> {
+  const { showManifest } = options;
   const headers = [
-    ...(showManifest ? ['Manifest'] : []),
+    ...(showManifest ? ['Workspace'] : []),
     'Package',
     'From \u2192 To',
     'Type',
@@ -285,5 +289,10 @@ export async function runDependencyDiffSignal(inputs: ActionInputs): Promise<Dep
 
   core.info(`📋 Found ${limited.length} dependency change(s)`);
 
-  return { hasChanges: true, data: buildDependencyDiffData(limited) };
+  return {
+    hasChanges: true,
+    data: buildDependencyDiffData(limited, {
+      showManifest: isMonorepo([...baseManifests, ...headManifests]),
+    }),
+  };
 }

@@ -3,7 +3,7 @@ import {
   collectNewDependencies,
   buildNewDependencyData,
 } from '../../signals/new-dependency';
-import type { LoadedManifest } from '../../signals/utils';
+import { isMonorepo, type LoadedManifest } from '../../signals/utils';
 
 function manifest(path: string, body: Record<string, unknown>): LoadedManifest {
   return { path, manifest: body };
@@ -97,25 +97,60 @@ describe('collectNewDependencies', () => {
 });
 
 describe('buildNewDependencyData', () => {
-  it('omits the Manifest column when every addition is in the root', () => {
-    const deps = collectNewDependencies(
+  function table(base: LoadedManifest[], head: LoadedManifest[]) {
+    const deps = collectNewDependencies(base, head, fields);
+    return buildNewDependencyData(deps, {
+      showManifest: isMonorepo([...base, ...head]),
+    });
+  }
+
+  it('omits the Workspace column when the only package.json is the root', () => {
+    const data = table(
       [],
       [manifest('package.json', { dependencies: { zod: '1.0.0' } })],
-      fields,
     );
-    const data = buildNewDependencyData(deps);
     expect(data.headers).toEqual(['Package', 'Version', 'CVEs', 'Weekly DL', 'Last Release']);
   });
 
-  it('adds a Manifest column for a nested package.json', () => {
-    const deps = collectNewDependencies(
+  it('omits the Workspace column when the only package.json is nested', () => {
+    const data = table(
       [],
       [manifest('apps/web/package.json', { dependencies: { zod: '1.0.0' } })],
-      fields,
     );
-    const data = buildNewDependencyData(deps);
-    expect(data.headers).toEqual(['Manifest', 'Package', 'Version', 'CVEs', 'Weekly DL', 'Last Release']);
+    expect(data.headers).toEqual(['Package', 'Version', 'CVEs', 'Weekly DL', 'Last Release']);
+  });
+
+  it('keeps the Workspace column when a monorepo only adds a root dependency', () => {
+    const data = table(
+      [
+        manifest('package.json', { dependencies: {} }),
+        manifest('packages/ui/package.json', { dependencies: { react: '18.0.0' } }),
+      ],
+      [
+        manifest('package.json', { dependencies: { zod: '1.0.0' } }),
+        manifest('packages/ui/package.json', { dependencies: { react: '18.0.0' } }),
+      ],
+    );
+    expect(data.headers).toEqual(['Workspace', 'Package', 'Version', 'CVEs', 'Weekly DL', 'Last Release']);
     const rows = data.rows as Array<{ cells: Array<{ markdown: string }> }>;
-    expect(rows[0].cells[0].markdown).toBe('apps/web');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].cells[0].markdown).toBe('root manifest');
+  });
+
+  it('keeps the Workspace column when a monorepo only adds a dependency in one package', () => {
+    const data = table(
+      [
+        manifest('package.json', { dependencies: { lodash: '1.0.0' } }),
+        manifest('packages/ui/package.json', { dependencies: {} }),
+      ],
+      [
+        manifest('package.json', { dependencies: { lodash: '1.0.0' } }),
+        manifest('packages/ui/package.json', { dependencies: { zod: '1.0.0' } }),
+      ],
+    );
+    expect(data.headers).toEqual(['Workspace', 'Package', 'Version', 'CVEs', 'Weekly DL', 'Last Release']);
+    const rows = data.rows as Array<{ cells: Array<{ markdown: string }> }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].cells[0].markdown).toBe('packages/ui');
   });
 });

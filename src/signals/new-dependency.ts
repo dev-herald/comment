@@ -14,6 +14,7 @@ import {
   indexPackageVersions,
   resolveDependencySpecifier,
   manifestLabel,
+  isMonorepo,
   batchOsvQuery,
   formatTimestamp,
 } from './utils';
@@ -262,10 +263,13 @@ export function collectNewDependencies(
   return newDeps;
 }
 
-export function buildNewDependencyData(deps: NewDep[]): Record<string, unknown> {
-  const showManifest = deps.some((d) => d.manifest !== '.');
+export function buildNewDependencyData(
+  deps: NewDep[],
+  options: { showManifest: boolean },
+): Record<string, unknown> {
+  const { showManifest } = options;
   const headers = [
-    ...(showManifest ? ['Manifest'] : []),
+    ...(showManifest ? ['Workspace'] : []),
     'Package',
     'Version',
     'CVEs',
@@ -354,5 +358,10 @@ export async function runNewDependencySignal(inputs: ActionInputs): Promise<NewD
     }),
   ]);
 
-  return { hasChanges: true, data: buildNewDependencyData(limited) };
+  return {
+    hasChanges: true,
+    data: buildNewDependencyData(limited, {
+      showManifest: isMonorepo([...baseManifests, ...headManifests]),
+    }),
+  };
 }
