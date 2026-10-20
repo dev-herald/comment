@@ -3,7 +3,7 @@ import {
   collectNewDependencies,
   buildNewDependencyData,
 } from '../../signals/new-dependency';
-import { isMonorepo, type LoadedManifest } from '../../signals/utils';
+import { isMonorepo, type LoadedManifest, type PnpmCatalogs } from '../../signals/utils';
 
 function manifest(path: string, body: Record<string, unknown>): LoadedManifest {
   return { path, manifest: body };
@@ -83,6 +83,37 @@ describe('collectNewDependencies', () => {
     })];
 
     expect(collectNewDependencies(base, head, fields)).toEqual([]);
+  });
+
+  it('resolves a new catalog: dependency against the head catalog', () => {
+    const catalogs: PnpmCatalogs = {
+      defaultCatalog: { zod: '^3.22.0' },
+      named: { react17: { react: '^17.0.2' } },
+    };
+    const head = [manifest('apps/web/package.json', {
+      dependencies: { zod: 'catalog:', react: 'catalog:react17', lodash: 'catalog:missing' },
+    })];
+
+    expect(collectNewDependencies([], head, fields, catalogs)).toEqual([
+      expect.objectContaining({
+        name: 'zod',
+        version: 'catalog: (^3.22.0)',
+        comparableVersion: '^3.22.0',
+        workspace: false,
+      }),
+      expect.objectContaining({
+        name: 'react',
+        version: 'catalog:react17 (^17.0.2)',
+        comparableVersion: '^17.0.2',
+        workspace: false,
+      }),
+      expect.objectContaining({
+        name: 'lodash',
+        version: 'catalog:missing',
+        comparableVersion: 'catalog:missing',
+        workspace: false,
+      }),
+    ]);
   });
 
   it('includes every dependency from a package.json that did not exist on base', () => {

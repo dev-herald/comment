@@ -5,11 +5,13 @@ import {
   type OsvQuery,
   type OsvBatchResponse,
   type LoadedManifest,
+  type PnpmCatalogs,
   isLocalDep,
   isWorkspaceDep,
   isSemver,
   getBaseSha,
   loadManifestsAtSha,
+  loadPnpmCatalogsAtSha,
   readDependencyField,
   indexPackageVersions,
   resolveDependencySpecifier,
@@ -17,6 +19,7 @@ import {
   isMonorepo,
   batchOsvQuery,
   formatTimestamp,
+  EMPTY_PNPM_CATALOGS,
 } from './utils';
 
 // ============================================================================
@@ -220,11 +223,13 @@ export function formatRelativeTime(dateStr: string | null): string {
 /**
  * Packages present on head and absent from the same manifest path on base.
  * A brand-new package.json contributes every dependency it declares.
+ * `catalog:` specifiers resolve against the head pnpm-workspace.yaml.
  */
 export function collectNewDependencies(
   baseManifests: LoadedManifest[],
   headManifests: LoadedManifest[],
   includedFields: string[],
+  catalogs: PnpmCatalogs = EMPTY_PNPM_CATALOGS,
 ): NewDep[] {
   const baseByPath = new Map(baseManifests.map((m) => [m.path, m.manifest]));
   const headByPath = new Map(headManifests.map((m) => [m.path, m.manifest]));
@@ -245,7 +250,7 @@ export function collectNewDependencies(
         if (baseDeps[name] !== undefined) continue;
         if (isLocalDep(version)) continue;
 
-        const spec = resolveDependencySpecifier(version, name, versionsByName);
+        const spec = resolveDependencySpecifier(version, name, versionsByName, catalogs);
         newDeps.push({
           manifest: label,
           name,
@@ -313,11 +318,17 @@ export async function runNewDependencySignal(inputs: ActionInputs): Promise<NewD
 
   const baseManifests = loadManifestsAtSha(baseSha, 'NEW_DEPENDENCY');
   const headManifests = loadManifestsAtSha('HEAD', 'NEW_DEPENDENCY');
+  const headCatalogs = loadPnpmCatalogsAtSha('HEAD', 'NEW_DEPENDENCY');
   core.info(
     `📦 Scanning ${headManifests.length} package.json file(s); fields: ${options.includedFields.join(', ')}`,
   );
 
-  const newDeps = collectNewDependencies(baseManifests, headManifests, options.includedFields);
+  const newDeps = collectNewDependencies(
+    baseManifests,
+    headManifests,
+    options.includedFields,
+    headCatalogs,
+  );
 
   // Apply limit before any API queries to avoid unnecessary calls
   const limited = newDeps.slice(0, options.maxDeps);

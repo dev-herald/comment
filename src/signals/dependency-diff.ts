@@ -4,10 +4,12 @@ import {
   type OsvQuery,
   type OsvBatchResponse,
   type LoadedManifest,
+  type PnpmCatalogs,
   isLocalDep,
   isSemver,
   getBaseSha,
   loadManifestsAtSha,
+  loadPnpmCatalogsAtSha,
   readDependencyField,
   indexPackageVersions,
   resolveDependencySpecifier,
@@ -15,6 +17,7 @@ import {
   isMonorepo,
   batchOsvQuery,
   formatTimestamp,
+  EMPTY_PNPM_CATALOGS,
 } from './utils';
 
 export { isLocalDep, isSemver };
@@ -154,8 +157,17 @@ async function queryCVEDeltas(changes: DepChange[]): Promise<void> {
   });
 }
 
+export interface DependencyCatalogs {
+  base: PnpmCatalogs;
+  head: PnpmCatalogs;
+}
+
 /**
- * Version changes per manifest path. Specifier strings are compared as written.
+ * Version changes per manifest path.
+ * Specifier strings are compared as written, except `catalog:` specifiers, which
+ * are resolved against that side's pnpm-workspace.yaml. A catalog version bump
+ * with an unchanged package.json is a change. `workspace:*` still uses the head
+ * package version only, so a local version move with the same alias is not.
  * A path that exists on only one side is an empty manifest on the other.
  * New manifests contribute nothing here; those packages belong to NEW_DEPENDENCY.
  */
@@ -163,6 +175,7 @@ export function collectDependencyChanges(
   baseManifests: LoadedManifest[],
   headManifests: LoadedManifest[],
   includedFields: string[],
+  catalogs: DependencyCatalogs = { base: EMPTY_PNPM_CATALOGS, head: EMPTY_PNPM_CATALOGS },
 ): DepChange[] {
   const baseByPath = new Map(baseManifests.map((m) => [m.path, m.manifest]));
   const headByPath = new Map(headManifests.map((m) => [m.path, m.manifest]));
@@ -182,15 +195,16 @@ export function collectDependencyChanges(
       for (const [name, headVersion] of Object.entries(headDeps)) {
         const baseVersion = baseDeps[name];
 
-        // Only report version changes for packages that already existed in base
+        // Only report version changes for packages that already existed in base.
         if (!baseVersion) continue;
-        if (baseVersion === headVersion) continue;
 
-        // Skip filesystem installs. workspace: specifiers are real rows.
+        // Skip filesystem installs. workspace: and catalog: specifiers are real rows.
         if (isLocalDep(baseVersion) || isLocalDep(headVersion)) continue;
 
-        const fromSpec = resolveDependencySpecifier(baseVersion, name, versionsByName);
-        const toSpec = resolveDependencySpecifier(headVersion, name, versionsByName);
+        const fromSpec = resolveDependencySpecifier(baseVersion, name, versionsByName, catalogs.base);
+        const toSpec = resolveDependencySpecifier(headVersion, name, versionsByName, catalogs.head);
+
+        if (baseVersion === headVersion && fromSpec.comparable === toSpec.comparable) continue;
 
         changes.push({
           manifest: label,
@@ -257,11 +271,16 @@ export async function runDependencyDiffSignal(inputs: ActionInputs): Promise<Dep
 
   const baseManifests = loadManifestsAtSha(baseSha, 'DEPENDENCY_DIFF');
   const headManifests = loadManifestsAtSha('HEAD', 'DEPENDENCY_DIFF');
+  const baseCatalogs = loadPnpmCatalogsAtSha(baseSha, 'DEPENDENCY_DIFF');
+  const headCatalogs = loadPnpmCatalogsAtSha('HEAD', 'DEPENDENCY_DIFF');
   core.info(
     `📦 Scanning ${headManifests.length} package.json file(s); fields: ${options.includedFields.join(', ')}`,
   );
 
-  const changes = collectDependencyChanges(baseManifests, headManifests, options.includedFields);
+  const changes = collectDependencyChanges(baseManifests, headManifests, options.includedFields, {
+    base: baseCatalogs,
+    head: headCatalogs,
+  });
 
   // Apply limit before CVE queries to avoid unnecessary API calls
   const limited = changes.slice(0, options.maxDeps);

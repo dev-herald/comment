@@ -10,7 +10,14 @@ import {
   collectDependencyChanges,
   buildDependencyDiffData,
 } from '../../signals/dependency-diff';
-import { isMonorepo, isTrackedPackageJson, type LoadedManifest } from '../../signals/utils';
+import {
+  isMonorepo,
+  isTrackedPackageJson,
+  loadPnpmCatalogsAtSha,
+  parsePnpmCatalogs,
+  type LoadedManifest,
+  type PnpmCatalogs,
+} from '../../signals/utils';
 
 // ---------------------------------------------------------------------------
 // isLocalDep
@@ -35,6 +42,41 @@ describe('isLocalDep', () => {
     'latest',
   ])('returns false for non-local "%s"', (v) => {
     expect(isLocalDep(v)).toBe(false);
+  });
+});
+
+describe('parsePnpmCatalogs', () => {
+  it('reads the default catalog and named catalogs', () => {
+    const catalogs = parsePnpmCatalogs(`
+packages:
+  - 'packages/*'
+catalog:
+  react: ^19.0.0
+  "@scope/pkg": "1.2.3"
+catalogs:
+  react17:
+    react: ^17.0.2
+`);
+
+    expect(catalogs).toEqual({
+      defaultCatalog: { react: '^19.0.0', '@scope/pkg': '1.2.3' },
+      named: { react17: { react: '^17.0.2' } },
+    });
+  });
+
+  it('returns null for empty input', () => {
+    expect(parsePnpmCatalogs('')).toBeNull();
+  });
+
+  it('returns null for invalid YAML', () => {
+    expect(parsePnpmCatalogs('catalog: [')).toBeNull();
+  });
+
+  it('returns empty catalogs when pnpm-workspace.yaml is absent at HEAD', () => {
+    expect(loadPnpmCatalogsAtSha('HEAD', 'DEPENDENCY_DIFF')).toEqual({
+      defaultCatalog: {},
+      named: {},
+    });
   });
 });
 
@@ -295,6 +337,109 @@ describe('collectDependencyChanges', () => {
       to: 'workspace:*',
       toComparable: 'workspace:*',
       changeType: 'unknown',
+    });
+  });
+
+  it('ignores an unchanged catalog: when the catalog version is the same', () => {
+    const catalogs: { base: PnpmCatalogs; head: PnpmCatalogs } = {
+      base: { defaultCatalog: { react: '^19.0.0' }, named: {} },
+      head: { defaultCatalog: { react: '^19.0.0' }, named: {} },
+    };
+    const base = [manifest('package.json', { dependencies: { react: 'catalog:' } })];
+    const head = [manifest('package.json', { dependencies: { react: 'catalog:' } })];
+
+    expect(collectDependencyChanges(base, head, fields, catalogs)).toEqual([]);
+  });
+
+  it('reports a catalog version bump when the package.json specifier stays catalog:', () => {
+    const catalogs: { base: PnpmCatalogs; head: PnpmCatalogs } = {
+      base: { defaultCatalog: { react: '^1.0.0' }, named: {} },
+      head: { defaultCatalog: { react: '^2.0.0' }, named: {} },
+    };
+    const base = [manifest('apps/web/package.json', { dependencies: { react: 'catalog:' } })];
+    const head = [manifest('apps/web/package.json', { dependencies: { react: 'catalog:' } })];
+
+    const [change] = collectDependencyChanges(base, head, fields, catalogs);
+    expect(change).toMatchObject({
+      manifest: 'apps/web',
+      name: 'react',
+      from: 'catalog: (^1.0.0)',
+      to: 'catalog: (^2.0.0)',
+      fromComparable: '^1.0.0',
+      toComparable: '^2.0.0',
+      changeType: 'major',
+    });
+  });
+
+  it('resolves catalog:react17 from the named catalog and does not use the default', () => {
+    const catalogs: { base: PnpmCatalogs; head: PnpmCatalogs } = {
+      base: { defaultCatalog: { react: '^19.0.0' }, named: { react17: { react: '^17.0.0' } } },
+      head: { defaultCatalog: { react: '^19.0.0' }, named: { react17: { react: '^17.0.2' } } },
+    };
+    const base = [manifest('package.json', { dependencies: { react: 'catalog:react17' } })];
+    const head = [manifest('package.json', { dependencies: { react: 'catalog:react17' } })];
+
+    const [change] = collectDependencyChanges(base, head, fields, catalogs);
+    expect(change).toMatchObject({
+      from: 'catalog:react17 (^17.0.0)',
+      to: 'catalog:react17 (^17.0.2)',
+      fromComparable: '^17.0.0',
+      toComparable: '^17.0.2',
+      changeType: 'patch',
+    });
+  });
+
+  it('leaves a missing catalog entry as written', () => {
+    const catalogs: { base: PnpmCatalogs; head: PnpmCatalogs } = {
+      base: { defaultCatalog: { react: '^19.0.0' }, named: {} },
+      head: { defaultCatalog: { react: '^19.0.0' }, named: {} },
+    };
+    const base = [manifest('package.json', { dependencies: { react: '1.0.0' } })];
+    const head = [manifest('package.json', { dependencies: { react: 'catalog:react17' } })];
+
+    const [change] = collectDependencyChanges(base, head, fields, catalogs);
+    expect(change).toMatchObject({
+      to: 'catalog:react17',
+      toComparable: 'catalog:react17',
+      changeType: 'unknown',
+    });
+  });
+
+  it('reports one row per manifest that shares a catalog entry', () => {
+    const catalogs: { base: PnpmCatalogs; head: PnpmCatalogs } = {
+      base: { defaultCatalog: { zod: '^3.0.0' }, named: {} },
+      head: { defaultCatalog: { zod: '^3.22.0' }, named: {} },
+    };
+    const base = [
+      manifest('apps/web/package.json', { dependencies: { zod: 'catalog:' } }),
+      manifest('packages/ui/package.json', { dependencies: { zod: 'catalog:' } }),
+    ];
+    const head = [
+      manifest('apps/web/package.json', { dependencies: { zod: 'catalog:' } }),
+      manifest('packages/ui/package.json', { dependencies: { zod: 'catalog:' } }),
+    ];
+
+    const changes = collectDependencyChanges(base, head, fields, catalogs);
+    expect(changes.map((c) => [c.manifest, c.name, c.to])).toEqual([
+      ['apps/web', 'zod', 'catalog: (^3.22.0)'],
+      ['packages/ui', 'zod', 'catalog: (^3.22.0)'],
+    ]);
+  });
+
+  it('still reports a specifier change when the resolved catalog range matches', () => {
+    const catalogs: { base: PnpmCatalogs; head: PnpmCatalogs } = {
+      base: { defaultCatalog: {}, named: {} },
+      head: { defaultCatalog: { react: '^1.0.0' }, named: {} },
+    };
+    const base = [manifest('package.json', { dependencies: { react: '^1.0.0' } })];
+    const head = [manifest('package.json', { dependencies: { react: 'catalog:' } })];
+
+    const [change] = collectDependencyChanges(base, head, fields, catalogs);
+    expect(change).toMatchObject({
+      from: '^1.0.0',
+      to: 'catalog: (^1.0.0)',
+      fromComparable: '^1.0.0',
+      toComparable: '^1.0.0',
     });
   });
 
