@@ -71,6 +71,35 @@ const fields = ['dependencies'];
             })];
         (0, vitest_1.expect)((0, new_dependency_1.collectNewDependencies)(base, head, fields)).toEqual([]);
     });
+    (0, vitest_1.it)('resolves a new catalog: dependency against the head catalog', () => {
+        const catalogs = {
+            defaultCatalog: { zod: '^3.22.0' },
+            named: { react17: { react: '^17.0.2' } },
+        };
+        const head = [manifest('apps/web/package.json', {
+                dependencies: { zod: 'catalog:', react: 'catalog:react17', lodash: 'catalog:missing' },
+            })];
+        (0, vitest_1.expect)((0, new_dependency_1.collectNewDependencies)([], head, fields, catalogs)).toEqual([
+            vitest_1.expect.objectContaining({
+                name: 'zod',
+                version: 'catalog: (^3.22.0)',
+                comparableVersion: '^3.22.0',
+                workspace: false,
+            }),
+            vitest_1.expect.objectContaining({
+                name: 'react',
+                version: 'catalog:react17 (^17.0.2)',
+                comparableVersion: '^17.0.2',
+                workspace: false,
+            }),
+            vitest_1.expect.objectContaining({
+                name: 'lodash',
+                version: 'catalog:missing',
+                comparableVersion: 'catalog:missing',
+                workspace: false,
+            }),
+        ]);
+    });
     (0, vitest_1.it)('includes every dependency from a package.json that did not exist on base', () => {
         const head = [manifest('packages/new/package.json', {
                 dependencies: { zod: '1.0.0', local: 'link:../local' },

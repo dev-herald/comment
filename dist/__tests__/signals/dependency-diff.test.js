@@ -26,6 +26,36 @@ const utils_1 = require("../../signals/utils");
         (0, vitest_1.expect)((0, dependency_diff_1.isLocalDep)(v)).toBe(false);
     });
 });
+(0, vitest_1.describe)('parsePnpmCatalogs', () => {
+    (0, vitest_1.it)('reads the default catalog and named catalogs', () => {
+        const catalogs = (0, utils_1.parsePnpmCatalogs)(`
+packages:
+  - 'packages/*'
+catalog:
+  react: ^19.0.0
+  "@scope/pkg": "1.2.3"
+catalogs:
+  react17:
+    react: ^17.0.2
+`);
+        (0, vitest_1.expect)(catalogs).toEqual({
+            defaultCatalog: { react: '^19.0.0', '@scope/pkg': '1.2.3' },
+            named: { react17: { react: '^17.0.2' } },
+        });
+    });
+    (0, vitest_1.it)('returns null for empty input', () => {
+        (0, vitest_1.expect)((0, utils_1.parsePnpmCatalogs)('')).toBeNull();
+    });
+    (0, vitest_1.it)('returns null for invalid YAML', () => {
+        (0, vitest_1.expect)((0, utils_1.parsePnpmCatalogs)('catalog: [')).toBeNull();
+    });
+    (0, vitest_1.it)('returns empty catalogs when pnpm-workspace.yaml is absent at HEAD', () => {
+        (0, vitest_1.expect)((0, utils_1.loadPnpmCatalogsAtSha)('HEAD', 'DEPENDENCY_DIFF')).toEqual({
+            defaultCatalog: {},
+            named: {},
+        });
+    });
+});
 (0, vitest_1.describe)('isTrackedPackageJson', () => {
     (0, vitest_1.it)('keeps root and nested manifests', () => {
         (0, vitest_1.expect)((0, utils_1.isTrackedPackageJson)('package.json')).toBe(true);
@@ -236,6 +266,97 @@ const fields = ['dependencies'];
             to: 'workspace:*',
             toComparable: 'workspace:*',
             changeType: 'unknown',
+        });
+    });
+    (0, vitest_1.it)('ignores an unchanged catalog: when the catalog version is the same', () => {
+        const catalogs = {
+            base: { defaultCatalog: { react: '^19.0.0' }, named: {} },
+            head: { defaultCatalog: { react: '^19.0.0' }, named: {} },
+        };
+        const base = [manifest('package.json', { dependencies: { react: 'catalog:' } })];
+        const head = [manifest('package.json', { dependencies: { react: 'catalog:' } })];
+        (0, vitest_1.expect)((0, dependency_diff_1.collectDependencyChanges)(base, head, fields, catalogs)).toEqual([]);
+    });
+    (0, vitest_1.it)('reports a catalog version bump when the package.json specifier stays catalog:', () => {
+        const catalogs = {
+            base: { defaultCatalog: { react: '^1.0.0' }, named: {} },
+            head: { defaultCatalog: { react: '^2.0.0' }, named: {} },
+        };
+        const base = [manifest('apps/web/package.json', { dependencies: { react: 'catalog:' } })];
+        const head = [manifest('apps/web/package.json', { dependencies: { react: 'catalog:' } })];
+        const [change] = (0, dependency_diff_1.collectDependencyChanges)(base, head, fields, catalogs);
+        (0, vitest_1.expect)(change).toMatchObject({
+            manifest: 'apps/web',
+            name: 'react',
+            from: 'catalog: (^1.0.0)',
+            to: 'catalog: (^2.0.0)',
+            fromComparable: '^1.0.0',
+            toComparable: '^2.0.0',
+            changeType: 'major',
+        });
+    });
+    (0, vitest_1.it)('resolves catalog:react17 from the named catalog and does not use the default', () => {
+        const catalogs = {
+            base: { defaultCatalog: { react: '^19.0.0' }, named: { react17: { react: '^17.0.0' } } },
+            head: { defaultCatalog: { react: '^19.0.0' }, named: { react17: { react: '^17.0.2' } } },
+        };
+        const base = [manifest('package.json', { dependencies: { react: 'catalog:react17' } })];
+        const head = [manifest('package.json', { dependencies: { react: 'catalog:react17' } })];
+        const [change] = (0, dependency_diff_1.collectDependencyChanges)(base, head, fields, catalogs);
+        (0, vitest_1.expect)(change).toMatchObject({
+            from: 'catalog:react17 (^17.0.0)',
+            to: 'catalog:react17 (^17.0.2)',
+            fromComparable: '^17.0.0',
+            toComparable: '^17.0.2',
+            changeType: 'patch',
+        });
+    });
+    (0, vitest_1.it)('leaves a missing catalog entry as written', () => {
+        const catalogs = {
+            base: { defaultCatalog: { react: '^19.0.0' }, named: {} },
+            head: { defaultCatalog: { react: '^19.0.0' }, named: {} },
+        };
+        const base = [manifest('package.json', { dependencies: { react: '1.0.0' } })];
+        const head = [manifest('package.json', { dependencies: { react: 'catalog:react17' } })];
+        const [change] = (0, dependency_diff_1.collectDependencyChanges)(base, head, fields, catalogs);
+        (0, vitest_1.expect)(change).toMatchObject({
+            to: 'catalog:react17',
+            toComparable: 'catalog:react17',
+            changeType: 'unknown',
+        });
+    });
+    (0, vitest_1.it)('reports one row per manifest that shares a catalog entry', () => {
+        const catalogs = {
+            base: { defaultCatalog: { zod: '^3.0.0' }, named: {} },
+            head: { defaultCatalog: { zod: '^3.22.0' }, named: {} },
+        };
+        const base = [
+            manifest('apps/web/package.json', { dependencies: { zod: 'catalog:' } }),
+            manifest('packages/ui/package.json', { dependencies: { zod: 'catalog:' } }),
+        ];
+        const head = [
+            manifest('apps/web/package.json', { dependencies: { zod: 'catalog:' } }),
+            manifest('packages/ui/package.json', { dependencies: { zod: 'catalog:' } }),
+        ];
+        const changes = (0, dependency_diff_1.collectDependencyChanges)(base, head, fields, catalogs);
+        (0, vitest_1.expect)(changes.map((c) => [c.manifest, c.name, c.to])).toEqual([
+            ['apps/web', 'zod', 'catalog: (^3.22.0)'],
+            ['packages/ui', 'zod', 'catalog: (^3.22.0)'],
+        ]);
+    });
+    (0, vitest_1.it)('still reports a specifier change when the resolved catalog range matches', () => {
+        const catalogs = {
+            base: { defaultCatalog: {}, named: {} },
+            head: { defaultCatalog: { react: '^1.0.0' }, named: {} },
+        };
+        const base = [manifest('package.json', { dependencies: { react: '^1.0.0' } })];
+        const head = [manifest('package.json', { dependencies: { react: 'catalog:' } })];
+        const [change] = (0, dependency_diff_1.collectDependencyChanges)(base, head, fields, catalogs);
+        (0, vitest_1.expect)(change).toMatchObject({
+            from: '^1.0.0',
+            to: 'catalog: (^1.0.0)',
+            fromComparable: '^1.0.0',
+            toComparable: '^1.0.0',
         });
     });
     (0, vitest_1.it)('classifies workspace:^1.2.3 from the range after the protocol', () => {

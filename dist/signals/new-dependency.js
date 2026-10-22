@@ -203,8 +203,9 @@ function formatRelativeTime(dateStr) {
 /**
  * Packages present on head and absent from the same manifest path on base.
  * A brand-new package.json contributes every dependency it declares.
+ * `catalog:` specifiers resolve against the head pnpm-workspace.yaml.
  */
-function collectNewDependencies(baseManifests, headManifests, includedFields) {
+function collectNewDependencies(baseManifests, headManifests, includedFields, catalogs = utils_1.EMPTY_PNPM_CATALOGS) {
     const baseByPath = new Map(baseManifests.map((m) => [m.path, m.manifest]));
     const headByPath = new Map(headManifests.map((m) => [m.path, m.manifest]));
     const versionsByName = (0, utils_1.indexPackageVersions)(headManifests);
@@ -222,7 +223,7 @@ function collectNewDependencies(baseManifests, headManifests, includedFields) {
                     continue;
                 if ((0, utils_1.isLocalDep)(version))
                     continue;
-                const spec = (0, utils_1.resolveDependencySpecifier)(version, name, versionsByName);
+                const spec = (0, utils_1.resolveDependencySpecifier)(version, name, versionsByName, catalogs);
                 newDeps.push({
                     manifest: label,
                     name,
@@ -280,8 +281,9 @@ async function runNewDependencySignal(inputs) {
     core.info(`🔀 Base SHA: ${baseSha}`);
     const baseManifests = (0, utils_1.loadManifestsAtSha)(baseSha, 'NEW_DEPENDENCY');
     const headManifests = (0, utils_1.loadManifestsAtSha)('HEAD', 'NEW_DEPENDENCY');
+    const headCatalogs = (0, utils_1.loadPnpmCatalogsAtSha)('HEAD', 'NEW_DEPENDENCY');
     core.info(`📦 Scanning ${headManifests.length} package.json file(s); fields: ${options.includedFields.join(', ')}`);
-    const newDeps = collectNewDependencies(baseManifests, headManifests, options.includedFields);
+    const newDeps = collectNewDependencies(baseManifests, headManifests, options.includedFields, headCatalogs);
     // Apply limit before any API queries to avoid unnecessary calls
     const limited = newDeps.slice(0, options.maxDeps);
     if (limited.length === 0) {

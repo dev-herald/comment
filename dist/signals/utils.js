@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.EMPTY_PNPM_CATALOGS = void 0;
 exports.isLocalDep = isLocalDep;
 exports.isWorkspaceDep = isWorkspaceDep;
 exports.isSemver = isSemver;
@@ -42,14 +43,17 @@ exports.manifestLabel = manifestLabel;
 exports.isMonorepo = isMonorepo;
 exports.readDependencyField = readDependencyField;
 exports.indexPackageVersions = indexPackageVersions;
+exports.parsePnpmCatalogs = parsePnpmCatalogs;
 exports.resolveDependencySpecifier = resolveDependencySpecifier;
 exports.loadManifestsAtSha = loadManifestsAtSha;
+exports.loadPnpmCatalogsAtSha = loadPnpmCatalogsAtSha;
 exports.batchOsvQuery = batchOsvQuery;
 exports.formatTimestamp = formatTimestamp;
 const https = __importStar(require("https"));
 const core = __importStar(require("@actions/core"));
 const child_process_1 = require("child_process");
 const github = __importStar(require("@actions/github"));
+const yaml_1 = require("yaml");
 const zod_1 = require("zod");
 // ============================================================================
 // Version classifiers
@@ -154,12 +158,82 @@ function indexPackageVersions(manifests) {
         index.delete(name);
     return index;
 }
+exports.EMPTY_PNPM_CATALOGS = { defaultCatalog: {}, named: {} };
+const CATALOG_PROTOCOL = 'catalog:';
+function isPlainObject(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+function readStringMap(value) {
+    if (!isPlainObject(value))
+        return {};
+    const out = {};
+    for (const [key, entry] of Object.entries(value)) {
+        if (key.length === 0)
+            continue;
+        if (typeof entry === 'string' && entry.length > 0)
+            out[key] = entry;
+    }
+    return out;
+}
+/**
+ * Reads pnpm's default `catalog` and named `catalogs` maps.
+ * Empty input and invalid YAML return null. A workspace file with no catalog
+ * keys returns empty maps. Other keys, including `packages`, are ignored.
+ */
+function parsePnpmCatalogs(raw) {
+    let parsed;
+    try {
+        parsed = (0, yaml_1.parse)(raw);
+    }
+    catch {
+        return null;
+    }
+    if (!isPlainObject(parsed))
+        return null;
+    const named = {};
+    if (isPlainObject(parsed.catalogs)) {
+        for (const [name, table] of Object.entries(parsed.catalogs)) {
+            if (name.length === 0)
+                continue;
+            named[name] = readStringMap(table);
+        }
+    }
+    return {
+        defaultCatalog: readStringMap(parsed.catalog),
+        named,
+    };
+}
+/**
+ * `catalog:` uses the default catalog. `catalog:<name>` uses that named catalog
+ * and does not fall back to the default. The lookup key is the dependency name.
+ * Returns null when the specifier is not a catalog protocol.
+ */
+function lookupCatalogVersion(specifier, depName, catalogs) {
+    if (!specifier.startsWith(CATALOG_PROTOCOL))
+        return null;
+    const catalogName = specifier.slice(CATALOG_PROTOCOL.length);
+    const table = catalogName === '' ? catalogs.defaultCatalog : catalogs.named[catalogName];
+    if (!table)
+        return null;
+    return table[depName] ?? null;
+}
 /**
  * Bare `workspace:*`, `workspace:^`, and `workspace:~` use the local package version.
  * `workspace:^1.2.3` keeps the range after the protocol.
+ * `catalog:` and `catalog:<name>` use the matching pnpm catalog entry.
  * Anything else, including an alias we cannot resolve, stays as written.
  */
-function resolveDependencySpecifier(specifier, depName, versionsByName) {
+function resolveDependencySpecifier(specifier, depName, versionsByName, catalogs = exports.EMPTY_PNPM_CATALOGS) {
+    if (specifier.startsWith(CATALOG_PROTOCOL)) {
+        const resolved = lookupCatalogVersion(specifier, depName, catalogs);
+        if (!resolved || resolved === specifier) {
+            return { display: specifier, comparable: specifier };
+        }
+        return {
+            display: `${specifier} (${resolved})`,
+            comparable: resolved,
+        };
+    }
     if (!isWorkspaceDep(specifier)) {
         return { display: specifier, comparable: specifier };
     }
@@ -219,6 +293,33 @@ function loadManifestsAtSha(sha, signalName) {
             manifests.push({ path, manifest });
     }
     return manifests;
+}
+const MISSING_GIT_PATH = /does not exist in|exists on disk, but not in/;
+/**
+ * Catalogs from `pnpm-workspace.yaml` at `sha`.
+ * A missing file is empty catalogs. Invalid YAML warns and is treated as empty.
+ * Any other git or fetch-depth failure still throws.
+ */
+function loadPnpmCatalogsAtSha(sha, signalName) {
+    const shown = (0, child_process_1.spawnSync)('git', ['show', `${sha}:pnpm-workspace.yaml`], {
+        encoding: 'utf8',
+        maxBuffer: 10 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (shown.status !== 0) {
+        const detail = `${shown.stderr ?? ''}\n${shown.error?.message ?? ''}`;
+        if (MISSING_GIT_PATH.test(detail))
+            return exports.EMPTY_PNPM_CATALOGS;
+        throw new Error(`❌ ${signalName}: Could not read pnpm-workspace.yaml at SHA ${sha}.\n` +
+            `💡 Ensure fetch-depth: 0 is set in actions/checkout.\n` +
+            `Details: ${detail.trim()}`);
+    }
+    const catalogs = parsePnpmCatalogs(shown.stdout);
+    if (!catalogs) {
+        core.warning(`⚠️ ${signalName}: Skipping pnpm-workspace.yaml at ${sha} because it is not valid YAML.`);
+        return exports.EMPTY_PNPM_CATALOGS;
+    }
+    return catalogs;
 }
 // ============================================================================
 // OSV batch query
