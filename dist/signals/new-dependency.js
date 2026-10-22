@@ -287,12 +287,7 @@ async function runNewDependencySignal(inputs) {
     // Apply limit before any API queries to avoid unnecessary calls
     const limited = newDeps.slice(0, options.maxDeps);
     if (limited.length === 0) {
-        return {
-            hasChanges: false,
-            noChangesComment: `## \uD83D\uDCE6 New dependencies added\n\n` +
-                `No new dependencies detected in this PR.\n\n` +
-                `<sub>Updated ${(0, utils_1.formatTimestamp)()}</sub>`,
-        };
+        return { hasChanges: false };
     }
     core.info(`📋 Found ${limited.length} new dependency(ies)`);
     // Run all enrichment queries concurrently

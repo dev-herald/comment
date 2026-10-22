@@ -250,12 +250,7 @@ async function runDependencyDiffSignal(inputs) {
         }
     }
     if (limited.length === 0) {
-        return {
-            hasChanges: false,
-            noChangesComment: `## \uD83D\uDCE6 Dependency changes\n\n` +
-                `No dependency changes detected in the latest commit.\n\n` +
-                `<sub>Updated ${(0, utils_1.formatTimestamp)()}</sub>`,
-        };
+        return { hasChanges: false };
     }
     core.info(`📋 Found ${limited.length} dependency change(s)`);
     return {

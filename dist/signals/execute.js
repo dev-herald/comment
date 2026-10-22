@@ -63,8 +63,8 @@ function missingTestResultsError() {
         '        path: vitest-results/results.json');
 }
 /**
- * Runs one signal and returns whether to skip it, render a table, or include prose.
- * Single-signal mode and bulk mode share this so skip rules stay in one place.
+ * Runs one signal and returns whether to skip it, clear it, render a table, or include prose.
+ * Single-signal mode and bulk mode share this so empty-result rules stay in one place.
  */
 async function executeSignal(signal, inputs, parsedTestResults) {
     const resolvedInputs = (0, validation_1.resolveInputsForSignal)(inputs, signal);
@@ -72,8 +72,8 @@ async function executeSignal(signal, inputs, parsedTestResults) {
         const result = await (0, dependency_diff_1.runDependencyDiffSignal)(resolvedInputs);
         if (!result.hasChanges) {
             return {
-                action: 'skip',
-                commentLog: 'Skipping PR comment (no dependency changes)',
+                action: 'clear',
+                commentLog: 'No dependency changes to report',
                 sectionLog: 'Omitting DEPENDENCY_DIFF (no dependency changes)',
             };
         }
@@ -94,8 +94,8 @@ async function executeSignal(signal, inputs, parsedTestResults) {
         const result = await (0, new_dependency_1.runNewDependencySignal)(resolvedInputs);
         if (!result.hasChanges) {
             return {
-                action: 'skip',
-                commentLog: 'Skipping PR comment (no new dependencies)',
+                action: 'clear',
+                commentLog: 'No new dependencies to report',
                 sectionLog: 'Omitting NEW_DEPENDENCY (no new dependencies)',
             };
         }

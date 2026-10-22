@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.renderCustomTable = renderCustomTable;
 exports.stripUpdatedFooter = stripUpdatedFooter;
+exports.decideCommentAction = decideCommentAction;
 exports.buildBulkComment = buildBulkComment;
 /** Trailing timestamp the bundle "no changes" string already includes. */
 const UPDATED_FOOTER = /\n*<sub>Updated [\s\S]*?<\/sub>\s*$/;
@@ -29,13 +30,28 @@ function stripUpdatedFooter(markdown) {
     return markdown.replace(UPDATED_FOOTER, '').trimEnd();
 }
 /**
+ * Post when any section has content.
+ * Delete when every section was checked and empty.
+ * Preserve when nothing is reportable and at least one check could not run.
+ */
+function decideCommentAction(outcomes) {
+    if (outcomes.some((outcome) => outcome.action === 'table' || outcome.action === 'comment')) {
+        return 'post';
+    }
+    if (outcomes.some((outcome) => outcome.action === 'skip'))
+        return 'preserve';
+    if (outcomes.some((outcome) => outcome.action === 'clear'))
+        return 'delete';
+    return 'preserve';
+}
+/**
  * Joins rendered sections with a single timestamp footer.
- * Returns null when every section was skipped, so the caller does not post.
+ * Returns null when every section was omitted, so the caller does not post.
  */
 function buildBulkComment(outcomes, timestamp) {
     const sections = [];
     for (const outcome of outcomes) {
-        if (outcome.action === 'skip')
+        if (outcome.action === 'skip' || outcome.action === 'clear')
             continue;
         if (outcome.action === 'table') {
             sections.push(renderCustomTable(outcome.data));
