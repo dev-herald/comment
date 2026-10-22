@@ -126,6 +126,30 @@ export function handleApiErrorResponse(statusCode: number, responseData: ErrorRe
 }
 
 /**
+ * Handles DELETE /comment. 200 means nothing was on GitHub; 202 means deletion was queued.
+ */
+export function processDeleteResponse(response: HttpResponse): void {
+  const responseData = parseResponse(response);
+  core.setOutput('response', JSON.stringify(responseData));
+
+  if (response.statusCode >= 200 && response.statusCode < 300) {
+    const data = responseData?.data ?? responseData ?? {};
+    const message = typeof data.message === 'string' ? data.message : 'Sticky comment delete completed';
+    core.info(`✅ Success! Status code: ${response.statusCode}`);
+    core.info(`💡 ${message}`);
+    if (typeof data.commentId === 'string') {
+      core.setOutput('comment-id', data.commentId);
+    }
+    if (typeof data.status === 'string') {
+      core.setOutput('status', data.status);
+    }
+    return;
+  }
+
+  handleApiErrorResponse(response.statusCode, responseData as ErrorResponse);
+}
+
+/**
  * Processes the API response and sets appropriate outputs
  * This handles responses AFTER the API request has been made
  */

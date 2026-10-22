@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { parseSignalsInput } from '../../signals/parse-signals';
-import { buildBulkComment, renderCustomTable, stripUpdatedFooter, type SignalOutcome } from '../../bulk-comment';
+import {
+  buildBulkComment,
+  decideCommentAction,
+  renderCustomTable,
+  stripUpdatedFooter,
+  type SignalOutcome,
+} from '../../bulk-comment';
 
 describe('parseSignalsInput', () => {
   it('parses a YAML list in order and allows quotes', () => {
@@ -130,5 +136,45 @@ describe('buildBulkComment', () => {
       { action: 'skip', commentLog: 'baseline', sectionLog: 'omit baseline' },
     ];
     expect(buildBulkComment(outcomes, timestamp)).toBeNull();
+  });
+
+  it('omits a cleared dependency section and keeps the remaining table', () => {
+    const outcomes: SignalOutcome[] = [
+      { action: 'clear', commentLog: 'no deps', sectionLog: 'omit deps' },
+      {
+        action: 'table',
+        data: {
+          title: 'Bundle size',
+          headers: ['Chunk'],
+          rows: [{ cells: [{ markdown: 'app' }] }],
+        },
+      },
+    ];
+
+    const comment = buildBulkComment(outcomes, timestamp);
+    expect(comment).toContain('## Bundle size');
+    expect(comment).not.toContain('omit deps');
+    expect(decideCommentAction(outcomes)).toBe('post');
+  });
+});
+
+describe('decideCommentAction', () => {
+  const clear: SignalOutcome = { action: 'clear', commentLog: 'empty', sectionLog: 'omit' };
+  const skip: SignalOutcome = { action: 'skip', commentLog: 'missing', sectionLog: 'omit' };
+  const prose: SignalOutcome = { action: 'comment', markdown: '## Tests\n\nNo suites.' };
+
+  it('deletes when every section was checked and empty', () => {
+    expect(decideCommentAction([clear, clear])).toBe('delete');
+  });
+
+  it('preserves when a check could not run', () => {
+    expect(decideCommentAction([clear, skip])).toBe('preserve');
+    expect(decideCommentAction([skip])).toBe('preserve');
+    expect(decideCommentAction([])).toBe('preserve');
+  });
+
+  it('posts when any section still has content', () => {
+    expect(decideCommentAction([clear, prose])).toBe('post');
+    expect(decideCommentAction([skip, prose])).toBe('post');
   });
 });

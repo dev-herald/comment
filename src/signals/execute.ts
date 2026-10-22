@@ -34,8 +34,8 @@ function missingTestResultsError(): Error {
 }
 
 /**
- * Runs one signal and returns whether to skip it, render a table, or include prose.
- * Single-signal mode and bulk mode share this so skip rules stay in one place.
+ * Runs one signal and returns whether to skip it, clear it, render a table, or include prose.
+ * Single-signal mode and bulk mode share this so empty-result rules stay in one place.
  */
 export async function executeSignal(
   signal: string,
@@ -48,8 +48,8 @@ export async function executeSignal(
     const result = await runDependencyDiffSignal(resolvedInputs);
     if (!result.hasChanges) {
       return {
-        action: 'skip',
-        commentLog: 'Skipping PR comment (no dependency changes)',
+        action: 'clear',
+        commentLog: 'No dependency changes to report',
         sectionLog: 'Omitting DEPENDENCY_DIFF (no dependency changes)',
       };
     }
@@ -72,8 +72,8 @@ export async function executeSignal(
     const result = await runNewDependencySignal(resolvedInputs);
     if (!result.hasChanges) {
       return {
-        action: 'skip',
-        commentLog: 'Skipping PR comment (no new dependencies)',
+        action: 'clear',
+        commentLog: 'No new dependencies to report',
         sectionLog: 'Omitting NEW_DEPENDENCY (no new dependencies)',
       };
     }

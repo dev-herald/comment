@@ -1,13 +1,18 @@
 /**
  * One signal's contribution to a comment.
- * skip: section is omitted (no dependency changes, or missing bundle baseline).
+ * skip: section is omitted because the check could not produce a result (missing bundle baseline).
+ * clear: section was checked and has nothing to report (empty dependency diff).
  * table: CUSTOM_TABLE payload rendered locally in bulk mode.
  * comment: short markdown string posted as its own section.
  */
 export type SignalOutcome =
   | { action: 'skip'; commentLog: string; sectionLog: string }
+  | { action: 'clear'; commentLog: string; sectionLog: string }
   | { action: 'table'; data: Record<string, unknown> }
   | { action: 'comment'; markdown: string };
+
+/** What the step should do after every signal has run. */
+export type CommentDecision = 'post' | 'delete' | 'preserve';
 
 interface TableCell {
   markdown?: string;
@@ -49,14 +54,28 @@ export function stripUpdatedFooter(markdown: string): string {
 }
 
 /**
+ * Post when any section has content.
+ * Delete when every section was checked and empty.
+ * Preserve when nothing is reportable and at least one check could not run.
+ */
+export function decideCommentAction(outcomes: SignalOutcome[]): CommentDecision {
+  if (outcomes.some((outcome) => outcome.action === 'table' || outcome.action === 'comment')) {
+    return 'post';
+  }
+  if (outcomes.some((outcome) => outcome.action === 'skip')) return 'preserve';
+  if (outcomes.some((outcome) => outcome.action === 'clear')) return 'delete';
+  return 'preserve';
+}
+
+/**
  * Joins rendered sections with a single timestamp footer.
- * Returns null when every section was skipped, so the caller does not post.
+ * Returns null when every section was omitted, so the caller does not post.
  */
 export function buildBulkComment(outcomes: SignalOutcome[], timestamp: string): string | null {
   const sections: string[] = [];
 
   for (const outcome of outcomes) {
-    if (outcome.action === 'skip') continue;
+    if (outcome.action === 'skip' || outcome.action === 'clear') continue;
     if (outcome.action === 'table') {
       sections.push(renderCustomTable(outcome.data));
       continue;

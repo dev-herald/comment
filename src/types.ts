@@ -48,7 +48,12 @@ export interface ErrorResponse {
   commentId?: string;
 }
 
-export type RequestBody = SimpleCommentRequest | TemplateCommentRequest;
+export interface DeleteCommentRequest {
+  prNumber: number;
+  stickyId: string;
+}
+
+export type RequestBody = SimpleCommentRequest | TemplateCommentRequest | DeleteCommentRequest;
 
 export interface ActionInputs {
   apiKey: string;

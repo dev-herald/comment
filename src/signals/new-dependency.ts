@@ -18,7 +18,6 @@ import {
   manifestLabel,
   isMonorepo,
   batchOsvQuery,
-  formatTimestamp,
   EMPTY_PNPM_CATALOGS,
 } from './utils';
 
@@ -46,7 +45,6 @@ interface NewDependencyOptions {
 export interface NewDependencyResult {
   hasChanges: boolean;
   data?: Record<string, unknown>;
-  noChangesComment?: string;
 }
 
 // ============================================================================
@@ -334,13 +332,7 @@ export async function runNewDependencySignal(inputs: ActionInputs): Promise<NewD
   const limited = newDeps.slice(0, options.maxDeps);
 
   if (limited.length === 0) {
-    return {
-      hasChanges: false,
-      noChangesComment:
-        `## \uD83D\uDCE6 New dependencies added\n\n` +
-        `No new dependencies detected in this PR.\n\n` +
-        `<sub>Updated ${formatTimestamp()}</sub>`,
-    };
+    return { hasChanges: false };
   }
 
   core.info(`📋 Found ${limited.length} new dependency(ies)`);

@@ -166,7 +166,7 @@ jobs:
 
 ## Combined PR summary
 
-`signals` runs several signals in one step and posts one sticky comment. Section order follows the list. A dependency section with no changes is left out, and a missing bundle baseline leaves that section out. If every section is empty, the step does not post.
+`signals` runs several signals in one step and posts one sticky comment. Section order follows the list. A dependency section with no changes is left out. If nothing reportable remains and every empty section was a successful check, the sticky comment is deleted (`sticky-id` is required for that). A missing bundle baseline is not deleted, and that section is left out of a comment that still has other content.
 
 `DEPENDENCY_DIFF` and `NEW_DEPENDENCY` can share this comment, or stay as separate steps with their own sticky ids.
 

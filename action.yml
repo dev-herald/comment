@@ -40,7 +40,7 @@ inputs:
     required: false
   signals:
     description: |
-      YAML list of signals to run in one step. Each section is rendered to markdown and posted as a single comment (one sticky-id). Order in the list is the order of sections. A section with nothing to report is omitted; if every section is empty, nothing is posted.
+      YAML list of signals to run in one step. Each section is rendered to markdown and posted as a single comment (one sticky-id). Order in the list is the order of sections. A section with nothing to report is omitted. If nothing reportable remains and every empty section was a successful check, the sticky comment is deleted. A missing bundle baseline is left in place. Requires sticky-id to delete.
       Supported: DEPENDENCY_DIFF, TEST_RESULTS, NEW_DEPENDENCY, BUNDLE_ANALYSIS.
       Cannot be used together with "signal", "template", or "comment".
 

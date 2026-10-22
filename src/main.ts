@@ -1,8 +1,8 @@
 import * as core from '@actions/core';
 import { getActionInputs, validateInputs, buildRequestConfig } from './validation';
 import { buildHeaders, makeHttpRequest } from './api';
-import { processResponse } from './output';
-import { buildBulkComment } from './bulk-comment';
+import { processDeleteResponse, processResponse } from './output';
+import { buildBulkComment, decideCommentAction, type CommentDecision } from './bulk-comment';
 import { parseSignalsInput } from './signals/parse-signals';
 import { executeSignal, loadParsedTestResults } from './signals/execute';
 import { formatTimestamp } from './signals/utils';
@@ -10,52 +10,70 @@ import type { ParsedTestResults } from './parsers/types';
 import type { ActionInputs } from './types';
 
 /**
- * Single-signal mode: one outcome becomes one template payload, one prose comment, or no post.
+ * Single-signal mode: one outcome becomes one template payload, one prose comment, a delete, or no post.
  */
-async function applySingleSignal(inputs: ActionInputs, parsedTestResults?: ParsedTestResults): Promise<boolean> {
+async function applySingleSignal(inputs: ActionInputs, parsedTestResults?: ParsedTestResults): Promise<CommentDecision> {
   core.info(`📊 Running signal: ${inputs.signal}`);
   const outcome = await executeSignal(inputs.signal, inputs, parsedTestResults);
 
-  if (outcome.action === 'skip') {
+  if (outcome.action === 'skip' || outcome.action === 'clear') {
     core.info(outcome.commentLog);
-    return false;
-  }
-
-  if (outcome.action === 'table') {
+  } else if (outcome.action === 'table') {
     inputs.template = 'CUSTOM_TABLE';
     inputs.templateData = JSON.stringify(outcome.data);
-    return true;
+  } else {
+    inputs.comment = outcome.markdown;
   }
 
-  inputs.comment = outcome.markdown;
-  return true;
+  return decideCommentAction([outcome]);
 }
 
 /**
- * Bulk mode: render each section, join them, and post one plain comment.
- * Returns false when every section was skipped.
+ * Bulk mode: render each section and join the ones that still have content.
  */
-async function applyBulkSignals(inputs: ActionInputs, signals: string[]): Promise<boolean> {
+async function applyBulkSignals(inputs: ActionInputs, signals: string[]): Promise<CommentDecision> {
   const outcomes = [];
 
   for (const signal of signals) {
     core.info(`📊 Running signal: ${signal}`);
     const outcome = await executeSignal(signal, inputs);
-    if (outcome.action === 'skip') {
+    if (outcome.action === 'skip' || outcome.action === 'clear') {
       core.info(outcome.sectionLog);
     }
     outcomes.push(outcome);
   }
 
+  const decision = decideCommentAction(outcomes);
+  if (decision !== 'post') return decision;
+
   const comment = buildBulkComment(outcomes, formatTimestamp());
-  if (!comment) {
-    core.info('Skipping PR comment (every section was empty)');
-    return false;
-  }
+  if (!comment) return 'preserve';
 
   inputs.comment = comment;
   inputs.template = '';
-  return true;
+  return 'post';
+}
+
+/**
+ * Deletes the sticky comment for this pull request.
+ * Without a sticky id there is nothing the API can target, so the step exits successfully.
+ */
+async function deleteStickyComment(inputs: ActionInputs): Promise<void> {
+  if (inputs.stickyId.trim().length === 0) {
+    core.info('No sticky-id set, so the previous comment cannot be removed');
+    return;
+  }
+
+  const endpoint = `${inputs.apiUrl}/comment`;
+  const requestBody = { prNumber: inputs.prNumber, stickyId: inputs.stickyId.trim() };
+
+  core.info(`🗑️ Deleting sticky comment "${requestBody.stickyId}" on PR #${inputs.prNumber}`);
+  core.info(`📡 Endpoint: ${endpoint}`);
+  core.debug(`📦 Request body: ${JSON.stringify(requestBody, null, 2)}`);
+
+  const headers = buildHeaders(inputs.apiKey);
+  const response = await makeHttpRequest(endpoint, 'DELETE', headers, requestBody);
+  processDeleteResponse(response);
 }
 
 /**
@@ -86,12 +104,20 @@ async function run(): Promise<void> {
     // ============================================================
     // PHASE 1.7: RUN SIGNAL OR SIGNALS
     // ============================================================
+    let decision: CommentDecision = 'post';
     if (signals.length > 0) {
-      const shouldPost = await applyBulkSignals(inputs, signals);
-      if (!shouldPost) return;
+      decision = await applyBulkSignals(inputs, signals);
     } else if (inputs.signal && inputs.signal.trim().length > 0) {
-      const shouldPost = await applySingleSignal(inputs, parsedTestResults);
-      if (!shouldPost) return;
+      decision = await applySingleSignal(inputs, parsedTestResults);
+    }
+
+    if (decision === 'preserve') {
+      core.info('Leaving the existing comment in place');
+      return;
+    }
+    if (decision === 'delete') {
+      await deleteStickyComment(inputs);
+      return;
     }
 
     // Build and validate request configuration

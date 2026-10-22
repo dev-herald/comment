@@ -16,7 +16,6 @@ import {
   manifestLabel,
   isMonorepo,
   batchOsvQuery,
-  formatTimestamp,
   EMPTY_PNPM_CATALOGS,
 } from './utils';
 
@@ -48,7 +47,6 @@ interface DependencyDiffOptions {
 export interface DependencyDiffResult {
   hasChanges: boolean;
   data?: Record<string, unknown>;
-  noChangesComment?: string;
 }
 
 // ============================================================================
@@ -297,13 +295,7 @@ export async function runDependencyDiffSignal(inputs: ActionInputs): Promise<Dep
   }
 
   if (limited.length === 0) {
-    return {
-      hasChanges: false,
-      noChangesComment:
-        `## \uD83D\uDCE6 Dependency changes\n\n` +
-        `No dependency changes detected in the latest commit.\n\n` +
-        `<sub>Updated ${formatTimestamp()}</sub>`,
-    };
+    return { hasChanges: false };
   }
 
   core.info(`📋 Found ${limited.length} dependency change(s)`);
