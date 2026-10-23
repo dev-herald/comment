@@ -7,7 +7,7 @@ import {
   type PnpmCatalogs,
   isLocalDep,
   isSemver,
-  getBaseSha,
+  getComparisonShas,
   loadManifestsAtSha,
   loadPnpmCatalogsAtSha,
   readDependencyField,
@@ -264,13 +264,14 @@ export async function runDependencyDiffSignal(inputs: ActionInputs): Promise<Dep
     maxDeps: Math.max(1, parseInt(inputs.maxDeps, 10) || 25),
   };
 
-  const baseSha = getBaseSha('DEPENDENCY_DIFF');
+  const { baseSha, headSha } = getComparisonShas('DEPENDENCY_DIFF');
   core.info(`🔀 Base SHA: ${baseSha}`);
+  core.info(`🔀 Head SHA: ${headSha}`);
 
   const baseManifests = loadManifestsAtSha(baseSha, 'DEPENDENCY_DIFF');
-  const headManifests = loadManifestsAtSha('HEAD', 'DEPENDENCY_DIFF');
+  const headManifests = loadManifestsAtSha(headSha, 'DEPENDENCY_DIFF');
   const baseCatalogs = loadPnpmCatalogsAtSha(baseSha, 'DEPENDENCY_DIFF');
-  const headCatalogs = loadPnpmCatalogsAtSha('HEAD', 'DEPENDENCY_DIFF');
+  const headCatalogs = loadPnpmCatalogsAtSha(headSha, 'DEPENDENCY_DIFF');
   core.info(
     `📦 Scanning ${headManifests.length} package.json file(s); fields: ${options.includedFields.join(', ')}`,
   );

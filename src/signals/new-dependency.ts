@@ -9,7 +9,7 @@ import {
   isLocalDep,
   isWorkspaceDep,
   isSemver,
-  getBaseSha,
+  getComparisonShas,
   loadManifestsAtSha,
   loadPnpmCatalogsAtSha,
   readDependencyField,
@@ -311,12 +311,13 @@ export async function runNewDependencySignal(inputs: ActionInputs): Promise<NewD
     maxDeps: Math.max(1, parseInt(inputs.maxDeps, 10) || 25),
   };
 
-  const baseSha = getBaseSha('NEW_DEPENDENCY');
+  const { baseSha, headSha } = getComparisonShas('NEW_DEPENDENCY');
   core.info(`🔀 Base SHA: ${baseSha}`);
+  core.info(`🔀 Head SHA: ${headSha}`);
 
   const baseManifests = loadManifestsAtSha(baseSha, 'NEW_DEPENDENCY');
-  const headManifests = loadManifestsAtSha('HEAD', 'NEW_DEPENDENCY');
-  const headCatalogs = loadPnpmCatalogsAtSha('HEAD', 'NEW_DEPENDENCY');
+  const headManifests = loadManifestsAtSha(headSha, 'NEW_DEPENDENCY');
+  const headCatalogs = loadPnpmCatalogsAtSha(headSha, 'NEW_DEPENDENCY');
   core.info(
     `📦 Scanning ${headManifests.length} package.json file(s); fields: ${options.includedFields.join(', ')}`,
   );

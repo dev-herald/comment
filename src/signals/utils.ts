@@ -1,6 +1,6 @@
 import * as https from 'https';
 import * as core from '@actions/core';
-import { execFileSync, execSync, spawnSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import * as github from '@actions/github';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
@@ -51,23 +51,68 @@ export function isSemver(version: string): boolean {
 // Git helpers
 // ============================================================================
 
-export function getBaseSha(signalName: string): string {
-  const sha = github.context.payload?.pull_request?.base?.sha as string | undefined;
-  if (sha) return sha;
+export interface ComparisonShas {
+  /** Merge base of the PR and its base branch. Manifests here are the "before" tree. */
+  baseSha: string;
+  /** Tip of the PR branch. Manifests here are the "after" tree. */
+  headSha: string;
+}
+
+interface PullRequestTips {
+  base?: { sha?: string };
+  head?: { sha?: string };
+}
+
+/**
+ * Commits for a three-dot dependency compare: merge base → PR head.
+ * `pull_request.base.sha` is the base branch tip stored on the event, and
+ * checkout `HEAD` is often `refs/pull/<n>/merge`, which GitHub rebuilds on the
+ * current base. Diffing those two trees reports dependencies that landed on
+ * the base branch after this PR branched. The merge base against
+ * `pull_request.head.sha` is only what this PR introduced.
+ */
+export function getComparisonShas(signalName: string, cwd?: string): ComparisonShas {
+  const pr = github.context.payload?.pull_request as PullRequestTips | undefined;
+  const baseTip = pr?.base?.sha;
+  const headTip = pr?.head?.sha;
+
+  if (baseTip && headTip) {
+    return {
+      baseSha: gitMergeBase(baseTip, headTip, signalName, cwd),
+      headSha: headTip,
+    };
+  }
 
   const baseBranch = process.env.GITHUB_BASE_REF;
   if (baseBranch) {
-    try {
-      return execSync(`git merge-base HEAD origin/${baseBranch}`, { encoding: 'utf8' }).trim();
-    } catch {
-      // ignore, fall through to error
-    }
+    return {
+      baseSha: gitMergeBase('HEAD', `origin/${baseBranch}`, signalName, cwd),
+      headSha: 'HEAD',
+    };
   }
 
   throw new Error(
-    `❌ ${signalName}: Could not determine base SHA.\n` +
-    '💡 Make sure this action runs on a pull_request event.'
+    `❌ ${signalName}: Could not determine which commits to compare.\n` +
+    '💡 Make sure this action runs on a pull_request event with fetch-depth: 0.'
   );
+}
+
+function gitMergeBase(left: string, right: string, signalName: string, cwd?: string): string {
+  let sha = '';
+  try {
+    sha = execFileSync('git', ['merge-base', left, right], { encoding: 'utf8', cwd }).trim();
+  } catch (err) {
+    throw new Error(
+      `❌ ${signalName}: Could not determine the merge base of ${left} and ${right}.\n` +
+      '💡 Ensure fetch-depth: 0 is set in actions/checkout so both pull request SHAs are available.\n' +
+      `Details: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
+  if (!sha) {
+    throw new Error(`❌ ${signalName}: git merge-base of ${left} and ${right} returned an empty SHA.`);
+  }
+  return sha;
 }
 
 const manifestSchema = z.record(z.string(), z.unknown());
