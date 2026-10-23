@@ -109,4 +109,38 @@ const bulk_comment_1 = require("../../bulk-comment");
         ];
         (0, vitest_1.expect)((0, bulk_comment_1.buildBulkComment)(outcomes, timestamp)).toBeNull();
     });
+    (0, vitest_1.it)('omits a cleared dependency section and keeps the remaining table', () => {
+        const outcomes = [
+            { action: 'clear', commentLog: 'no deps', sectionLog: 'omit deps' },
+            {
+                action: 'table',
+                data: {
+                    title: 'Bundle size',
+                    headers: ['Chunk'],
+                    rows: [{ cells: [{ markdown: 'app' }] }],
+                },
+            },
+        ];
+        const comment = (0, bulk_comment_1.buildBulkComment)(outcomes, timestamp);
+        (0, vitest_1.expect)(comment).toContain('## Bundle size');
+        (0, vitest_1.expect)(comment).not.toContain('omit deps');
+        (0, vitest_1.expect)((0, bulk_comment_1.decideCommentAction)(outcomes)).toBe('post');
+    });
+});
+(0, vitest_1.describe)('decideCommentAction', () => {
+    const clear = { action: 'clear', commentLog: 'empty', sectionLog: 'omit' };
+    const skip = { action: 'skip', commentLog: 'missing', sectionLog: 'omit' };
+    const prose = { action: 'comment', markdown: '## Tests\n\nNo suites.' };
+    (0, vitest_1.it)('deletes when every section was checked and empty', () => {
+        (0, vitest_1.expect)((0, bulk_comment_1.decideCommentAction)([clear, clear])).toBe('delete');
+    });
+    (0, vitest_1.it)('preserves when a check could not run', () => {
+        (0, vitest_1.expect)((0, bulk_comment_1.decideCommentAction)([clear, skip])).toBe('preserve');
+        (0, vitest_1.expect)((0, bulk_comment_1.decideCommentAction)([skip])).toBe('preserve');
+        (0, vitest_1.expect)((0, bulk_comment_1.decideCommentAction)([])).toBe('preserve');
+    });
+    (0, vitest_1.it)('posts when any section still has content', () => {
+        (0, vitest_1.expect)((0, bulk_comment_1.decideCommentAction)([clear, prose])).toBe('post');
+        (0, vitest_1.expect)((0, bulk_comment_1.decideCommentAction)([skip, prose])).toBe('post');
+    });
 });

@@ -37,6 +37,7 @@ exports.parseResponse = parseResponse;
 exports.handleTemplateSuccess = handleTemplateSuccess;
 exports.handleSimpleSuccess = handleSimpleSuccess;
 exports.handleApiErrorResponse = handleApiErrorResponse;
+exports.processDeleteResponse = processDeleteResponse;
 exports.processResponse = processResponse;
 const core = __importStar(require("@actions/core"));
 /**
@@ -147,6 +148,27 @@ function handleApiErrorResponse(statusCode, responseData) {
         lines.push('💡 Invalid request. Review the validation errors above.');
     }
     core.setFailed(lines.join('\n'));
+}
+/**
+ * Handles DELETE /comment. 200 means nothing was on GitHub; 202 means deletion was queued.
+ */
+function processDeleteResponse(response) {
+    const responseData = parseResponse(response);
+    core.setOutput('response', JSON.stringify(responseData));
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+        const data = responseData?.data ?? responseData ?? {};
+        const message = typeof data.message === 'string' ? data.message : 'Sticky comment delete completed';
+        core.info(`✅ Success! Status code: ${response.statusCode}`);
+        core.info(`💡 ${message}`);
+        if (typeof data.commentId === 'string') {
+            core.setOutput('comment-id', data.commentId);
+        }
+        if (typeof data.status === 'string') {
+            core.setOutput('status', data.status);
+        }
+        return;
+    }
+    handleApiErrorResponse(response.statusCode, responseData);
 }
 /**
  * Processes the API response and sets appropriate outputs

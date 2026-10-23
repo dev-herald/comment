@@ -30121,6 +30121,7 @@ function buildHeaders(apiKey) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.renderCustomTable = renderCustomTable;
 exports.stripUpdatedFooter = stripUpdatedFooter;
+exports.decideCommentAction = decideCommentAction;
 exports.buildBulkComment = buildBulkComment;
 /** Trailing timestamp the bundle "no changes" string already includes. */
 const UPDATED_FOOTER = /\n*<sub>Updated [\s\S]*?<\/sub>\s*$/;
@@ -30148,13 +30149,28 @@ function stripUpdatedFooter(markdown) {
     return markdown.replace(UPDATED_FOOTER, '').trimEnd();
 }
 /**
+ * Post when any section has content.
+ * Delete when every section was checked and empty.
+ * Preserve when nothing is reportable and at least one check could not run.
+ */
+function decideCommentAction(outcomes) {
+    if (outcomes.some((outcome) => outcome.action === 'table' || outcome.action === 'comment')) {
+        return 'post';
+    }
+    if (outcomes.some((outcome) => outcome.action === 'skip'))
+        return 'preserve';
+    if (outcomes.some((outcome) => outcome.action === 'clear'))
+        return 'delete';
+    return 'preserve';
+}
+/**
  * Joins rendered sections with a single timestamp footer.
- * Returns null when every section was skipped, so the caller does not post.
+ * Returns null when every section was omitted, so the caller does not post.
  */
 function buildBulkComment(outcomes, timestamp) {
     const sections = [];
     for (const outcome of outcomes) {
-        if (outcome.action === 'skip')
+        if (outcome.action === 'skip' || outcome.action === 'clear')
             continue;
         if (outcome.action === 'table') {
             sections.push(renderCustomTable(outcome.data));
@@ -30220,45 +30236,63 @@ const parse_signals_1 = __nccwpck_require__(9075);
 const execute_1 = __nccwpck_require__(2927);
 const utils_1 = __nccwpck_require__(1229);
 /**
- * Single-signal mode: one outcome becomes one template payload, one prose comment, or no post.
+ * Single-signal mode: one outcome becomes one template payload, one prose comment, a delete, or no post.
  */
 async function applySingleSignal(inputs, parsedTestResults) {
     core.info(`📊 Running signal: ${inputs.signal}`);
     const outcome = await (0, execute_1.executeSignal)(inputs.signal, inputs, parsedTestResults);
-    if (outcome.action === 'skip') {
+    if (outcome.action === 'skip' || outcome.action === 'clear') {
         core.info(outcome.commentLog);
-        return false;
     }
-    if (outcome.action === 'table') {
+    else if (outcome.action === 'table') {
         inputs.template = 'CUSTOM_TABLE';
         inputs.templateData = JSON.stringify(outcome.data);
-        return true;
     }
-    inputs.comment = outcome.markdown;
-    return true;
+    else {
+        inputs.comment = outcome.markdown;
+    }
+    return (0, bulk_comment_1.decideCommentAction)([outcome]);
 }
 /**
- * Bulk mode: render each section, join them, and post one plain comment.
- * Returns false when every section was skipped.
+ * Bulk mode: render each section and join the ones that still have content.
  */
 async function applyBulkSignals(inputs, signals) {
     const outcomes = [];
     for (const signal of signals) {
         core.info(`📊 Running signal: ${signal}`);
         const outcome = await (0, execute_1.executeSignal)(signal, inputs);
-        if (outcome.action === 'skip') {
+        if (outcome.action === 'skip' || outcome.action === 'clear') {
             core.info(outcome.sectionLog);
         }
         outcomes.push(outcome);
     }
+    const decision = (0, bulk_comment_1.decideCommentAction)(outcomes);
+    if (decision !== 'post')
+        return decision;
     const comment = (0, bulk_comment_1.buildBulkComment)(outcomes, (0, utils_1.formatTimestamp)());
-    if (!comment) {
-        core.info('Skipping PR comment (every section was empty)');
-        return false;
-    }
+    if (!comment)
+        return 'preserve';
     inputs.comment = comment;
     inputs.template = '';
-    return true;
+    return 'post';
+}
+/**
+ * Deletes the sticky comment for this pull request.
+ * Without a sticky id there is nothing the API can target, so the step exits successfully.
+ */
+async function deleteStickyComment(inputs) {
+    if (inputs.stickyId.trim().length === 0) {
+        core.info('No sticky-id set, so the previous comment cannot be removed');
+        return;
+    }
+    const endpoint = `${inputs.apiUrl}/comment`;
+    const requestBody = { prNumber: inputs.prNumber, stickyId: inputs.stickyId.trim() };
+    core.info(`🗑️ Deleting sticky comment "${requestBody.stickyId}" on PR #${inputs.prNumber}`);
+    core.info(`📡 Endpoint: ${endpoint}`);
+    core.debug(`📦 Request body: ${JSON.stringify(requestBody, null, 2)}`);
+    const headers = (0, api_1.buildHeaders)(inputs.apiKey);
+    const response = await (0, api_1.makeHttpRequest)(endpoint, 'DELETE', headers, requestBody);
+    (0, output_1.processDeleteResponse)(response);
 }
 /**
  * Main action entry point
@@ -30285,15 +30319,20 @@ async function run() {
         // ============================================================
         // PHASE 1.7: RUN SIGNAL OR SIGNALS
         // ============================================================
+        let decision = 'post';
         if (signals.length > 0) {
-            const shouldPost = await applyBulkSignals(inputs, signals);
-            if (!shouldPost)
-                return;
+            decision = await applyBulkSignals(inputs, signals);
         }
         else if (inputs.signal && inputs.signal.trim().length > 0) {
-            const shouldPost = await applySingleSignal(inputs, parsedTestResults);
-            if (!shouldPost)
-                return;
+            decision = await applySingleSignal(inputs, parsedTestResults);
+        }
+        if (decision === 'preserve') {
+            core.info('Leaving the existing comment in place');
+            return;
+        }
+        if (decision === 'delete') {
+            await deleteStickyComment(inputs);
+            return;
         }
         // Build and validate request configuration
         const config = (0, validation_1.buildRequestConfig)(inputs);
@@ -30368,6 +30407,7 @@ exports.parseResponse = parseResponse;
 exports.handleTemplateSuccess = handleTemplateSuccess;
 exports.handleSimpleSuccess = handleSimpleSuccess;
 exports.handleApiErrorResponse = handleApiErrorResponse;
+exports.processDeleteResponse = processDeleteResponse;
 exports.processResponse = processResponse;
 const core = __importStar(__nccwpck_require__(6966));
 /**
@@ -30478,6 +30518,27 @@ function handleApiErrorResponse(statusCode, responseData) {
         lines.push('💡 Invalid request. Review the validation errors above.');
     }
     core.setFailed(lines.join('\n'));
+}
+/**
+ * Handles DELETE /comment. 200 means nothing was on GitHub; 202 means deletion was queued.
+ */
+function processDeleteResponse(response) {
+    const responseData = parseResponse(response);
+    core.setOutput('response', JSON.stringify(responseData));
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+        const data = responseData?.data ?? responseData ?? {};
+        const message = typeof data.message === 'string' ? data.message : 'Sticky comment delete completed';
+        core.info(`✅ Success! Status code: ${response.statusCode}`);
+        core.info(`💡 ${message}`);
+        if (typeof data.commentId === 'string') {
+            core.setOutput('comment-id', data.commentId);
+        }
+        if (typeof data.status === 'string') {
+            core.setOutput('status', data.status);
+        }
+        return;
+    }
+    handleApiErrorResponse(response.statusCode, responseData);
 }
 /**
  * Processes the API response and sets appropriate outputs
@@ -31605,12 +31666,7 @@ async function runDependencyDiffSignal(inputs) {
         }
     }
     if (limited.length === 0) {
-        return {
-            hasChanges: false,
-            noChangesComment: `## \uD83D\uDCE6 Dependency changes\n\n` +
-                `No dependency changes detected in the latest commit.\n\n` +
-                `<sub>Updated ${(0, utils_1.formatTimestamp)()}</sub>`,
-        };
+        return { hasChanges: false };
     }
     core.info(`📋 Found ${limited.length} dependency change(s)`);
     return {
@@ -31693,8 +31749,8 @@ function missingTestResultsError() {
         '        path: vitest-results/results.json');
 }
 /**
- * Runs one signal and returns whether to skip it, render a table, or include prose.
- * Single-signal mode and bulk mode share this so skip rules stay in one place.
+ * Runs one signal and returns whether to skip it, clear it, render a table, or include prose.
+ * Single-signal mode and bulk mode share this so empty-result rules stay in one place.
  */
 async function executeSignal(signal, inputs, parsedTestResults) {
     const resolvedInputs = (0, validation_1.resolveInputsForSignal)(inputs, signal);
@@ -31702,8 +31758,8 @@ async function executeSignal(signal, inputs, parsedTestResults) {
         const result = await (0, dependency_diff_1.runDependencyDiffSignal)(resolvedInputs);
         if (!result.hasChanges) {
             return {
-                action: 'skip',
-                commentLog: 'Skipping PR comment (no dependency changes)',
+                action: 'clear',
+                commentLog: 'No dependency changes to report',
                 sectionLog: 'Omitting DEPENDENCY_DIFF (no dependency changes)',
             };
         }
@@ -31724,8 +31780,8 @@ async function executeSignal(signal, inputs, parsedTestResults) {
         const result = await (0, new_dependency_1.runNewDependencySignal)(resolvedInputs);
         if (!result.hasChanges) {
             return {
-                action: 'skip',
-                commentLog: 'Skipping PR comment (no new dependencies)',
+                action: 'clear',
+                commentLog: 'No new dependencies to report',
                 sectionLog: 'Omitting NEW_DEPENDENCY (no new dependencies)',
             };
         }
@@ -32044,12 +32100,7 @@ async function runNewDependencySignal(inputs) {
     // Apply limit before any API queries to avoid unnecessary calls
     const limited = newDeps.slice(0, options.maxDeps);
     if (limited.length === 0) {
-        return {
-            hasChanges: false,
-            noChangesComment: `## \uD83D\uDCE6 New dependencies added\n\n` +
-                `No new dependencies detected in this PR.\n\n` +
-                `<sub>Updated ${(0, utils_1.formatTimestamp)()}</sub>`,
-        };
+        return { hasChanges: false };
     }
     core.info(`📋 Found ${limited.length} new dependency(ies)`);
     // Run all enrichment queries concurrently

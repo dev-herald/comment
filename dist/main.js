@@ -42,45 +42,63 @@ const parse_signals_1 = require("./signals/parse-signals");
 const execute_1 = require("./signals/execute");
 const utils_1 = require("./signals/utils");
 /**
- * Single-signal mode: one outcome becomes one template payload, one prose comment, or no post.
+ * Single-signal mode: one outcome becomes one template payload, one prose comment, a delete, or no post.
  */
 async function applySingleSignal(inputs, parsedTestResults) {
     core.info(`📊 Running signal: ${inputs.signal}`);
     const outcome = await (0, execute_1.executeSignal)(inputs.signal, inputs, parsedTestResults);
-    if (outcome.action === 'skip') {
+    if (outcome.action === 'skip' || outcome.action === 'clear') {
         core.info(outcome.commentLog);
-        return false;
     }
-    if (outcome.action === 'table') {
+    else if (outcome.action === 'table') {
         inputs.template = 'CUSTOM_TABLE';
         inputs.templateData = JSON.stringify(outcome.data);
-        return true;
     }
-    inputs.comment = outcome.markdown;
-    return true;
+    else {
+        inputs.comment = outcome.markdown;
+    }
+    return (0, bulk_comment_1.decideCommentAction)([outcome]);
 }
 /**
- * Bulk mode: render each section, join them, and post one plain comment.
- * Returns false when every section was skipped.
+ * Bulk mode: render each section and join the ones that still have content.
  */
 async function applyBulkSignals(inputs, signals) {
     const outcomes = [];
     for (const signal of signals) {
         core.info(`📊 Running signal: ${signal}`);
         const outcome = await (0, execute_1.executeSignal)(signal, inputs);
-        if (outcome.action === 'skip') {
+        if (outcome.action === 'skip' || outcome.action === 'clear') {
             core.info(outcome.sectionLog);
         }
         outcomes.push(outcome);
     }
+    const decision = (0, bulk_comment_1.decideCommentAction)(outcomes);
+    if (decision !== 'post')
+        return decision;
     const comment = (0, bulk_comment_1.buildBulkComment)(outcomes, (0, utils_1.formatTimestamp)());
-    if (!comment) {
-        core.info('Skipping PR comment (every section was empty)');
-        return false;
-    }
+    if (!comment)
+        return 'preserve';
     inputs.comment = comment;
     inputs.template = '';
-    return true;
+    return 'post';
+}
+/**
+ * Deletes the sticky comment for this pull request.
+ * Without a sticky id there is nothing the API can target, so the step exits successfully.
+ */
+async function deleteStickyComment(inputs) {
+    if (inputs.stickyId.trim().length === 0) {
+        core.info('No sticky-id set, so the previous comment cannot be removed');
+        return;
+    }
+    const endpoint = `${inputs.apiUrl}/comment`;
+    const requestBody = { prNumber: inputs.prNumber, stickyId: inputs.stickyId.trim() };
+    core.info(`🗑️ Deleting sticky comment "${requestBody.stickyId}" on PR #${inputs.prNumber}`);
+    core.info(`📡 Endpoint: ${endpoint}`);
+    core.debug(`📦 Request body: ${JSON.stringify(requestBody, null, 2)}`);
+    const headers = (0, api_1.buildHeaders)(inputs.apiKey);
+    const response = await (0, api_1.makeHttpRequest)(endpoint, 'DELETE', headers, requestBody);
+    (0, output_1.processDeleteResponse)(response);
 }
 /**
  * Main action entry point
@@ -107,15 +125,20 @@ async function run() {
         // ============================================================
         // PHASE 1.7: RUN SIGNAL OR SIGNALS
         // ============================================================
+        let decision = 'post';
         if (signals.length > 0) {
-            const shouldPost = await applyBulkSignals(inputs, signals);
-            if (!shouldPost)
-                return;
+            decision = await applyBulkSignals(inputs, signals);
         }
         else if (inputs.signal && inputs.signal.trim().length > 0) {
-            const shouldPost = await applySingleSignal(inputs, parsedTestResults);
-            if (!shouldPost)
-                return;
+            decision = await applySingleSignal(inputs, parsedTestResults);
+        }
+        if (decision === 'preserve') {
+            core.info('Leaving the existing comment in place');
+            return;
+        }
+        if (decision === 'delete') {
+            await deleteStickyComment(inputs);
+            return;
         }
         // Build and validate request configuration
         const config = (0, validation_1.buildRequestConfig)(inputs);
