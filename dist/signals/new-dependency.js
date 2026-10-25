@@ -277,11 +277,12 @@ async function runNewDependencySignal(inputs) {
         enableCve: inputs.enableCve.toLowerCase() === 'true',
         maxDeps: Math.max(1, parseInt(inputs.maxDeps, 10) || 25),
     };
-    const baseSha = (0, utils_1.getBaseSha)('NEW_DEPENDENCY');
+    const { baseSha, headSha } = (0, utils_1.getComparisonShas)('NEW_DEPENDENCY');
     core.info(`🔀 Base SHA: ${baseSha}`);
+    core.info(`🔀 Head SHA: ${headSha}`);
     const baseManifests = (0, utils_1.loadManifestsAtSha)(baseSha, 'NEW_DEPENDENCY');
-    const headManifests = (0, utils_1.loadManifestsAtSha)('HEAD', 'NEW_DEPENDENCY');
-    const headCatalogs = (0, utils_1.loadPnpmCatalogsAtSha)('HEAD', 'NEW_DEPENDENCY');
+    const headManifests = (0, utils_1.loadManifestsAtSha)(headSha, 'NEW_DEPENDENCY');
+    const headCatalogs = (0, utils_1.loadPnpmCatalogsAtSha)(headSha, 'NEW_DEPENDENCY');
     core.info(`📦 Scanning ${headManifests.length} package.json file(s); fields: ${options.includedFields.join(', ')}`);
     const newDeps = collectNewDependencies(baseManifests, headManifests, options.includedFields, headCatalogs);
     // Apply limit before any API queries to avoid unnecessary calls

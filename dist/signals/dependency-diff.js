@@ -227,12 +227,13 @@ async function runDependencyDiffSignal(inputs) {
         enableCve: inputs.enableCve.toLowerCase() === 'true',
         maxDeps: Math.max(1, parseInt(inputs.maxDeps, 10) || 25),
     };
-    const baseSha = (0, utils_1.getBaseSha)('DEPENDENCY_DIFF');
+    const { baseSha, headSha } = (0, utils_1.getComparisonShas)('DEPENDENCY_DIFF');
     core.info(`🔀 Base SHA: ${baseSha}`);
+    core.info(`🔀 Head SHA: ${headSha}`);
     const baseManifests = (0, utils_1.loadManifestsAtSha)(baseSha, 'DEPENDENCY_DIFF');
-    const headManifests = (0, utils_1.loadManifestsAtSha)('HEAD', 'DEPENDENCY_DIFF');
+    const headManifests = (0, utils_1.loadManifestsAtSha)(headSha, 'DEPENDENCY_DIFF');
     const baseCatalogs = (0, utils_1.loadPnpmCatalogsAtSha)(baseSha, 'DEPENDENCY_DIFF');
-    const headCatalogs = (0, utils_1.loadPnpmCatalogsAtSha)('HEAD', 'DEPENDENCY_DIFF');
+    const headCatalogs = (0, utils_1.loadPnpmCatalogsAtSha)(headSha, 'DEPENDENCY_DIFF');
     core.info(`📦 Scanning ${headManifests.length} package.json file(s); fields: ${options.includedFields.join(', ')}`);
     const changes = collectDependencyChanges(baseManifests, headManifests, options.includedFields, {
         base: baseCatalogs,
